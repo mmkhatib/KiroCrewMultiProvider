@@ -42,6 +42,15 @@
         "enabled": true
       },
       {
+        "id": "codex",
+        "label": "Codex CLI",
+        "command": "codex-acp",
+        "args": [],
+        "dialect": "standard",
+        "enabled": false,
+        "_note": "Codex CLI does not speak ACP natively; it needs an adapter. Install one (e.g. agentclientprotocol/codex-acp) so 'codex-acp' is on PATH, then set enabled=true. Off by default so the backend list only offers harnesses that can actually start."
+      },
+      {
         "id": "kas",
         "label": "KAS",
         "command": "",

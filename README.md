@@ -64,8 +64,24 @@ spec-compliant agent (Gemini `--experimental-acp`, codex-acp): protocol version
 1, models from `session/new` → `models.availableModels`, set with
 `session/set_model`. `native` is kiro-cli/KAS and is left untouched.
 
-Adding Codex means installing an ACP adapter (e.g. `codex-acp`) and adding a
-`standard` row pointing at it.
+### What ships enabled
+
+| harness | id | ships | needs |
+|---|---|---|---|
+| Claude Code | `claude` | **on** | `claude-agent-acp` + a local `claude` |
+| Gemini CLI | `gemini` | **on** | `gemini` on PATH (`--experimental-acp` is built in) |
+| Codex CLI | `codex` | off | an ACP adapter on PATH — see below |
+| KAS | `kas` | off | nothing; kiro-cli/KAS already work natively |
+
+**Codex** does not speak ACP natively. Install an adapter — e.g.
+[agentclientprotocol/codex-acp](https://github.com/agentclientprotocol/codex-acp),
+a stdio ACP server that fronts the Codex app-server — so that `codex-acp` is on
+PATH, then flip its row to `"enabled": true`.
+
+Rows are off by default when their binary usually isn't present, so the backend
+list only offers harnesses that can actually start. A registered harness with a
+missing binary still appears — it just fails at spawn, with a startup warning
+naming the missing command.
 
 ## Models
 
