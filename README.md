@@ -96,10 +96,38 @@ default | sonnet | claude-fable-5[1m] | opus | haiku
 `opus` is Opus 5. Note `claude-opus-5` is a Claude Code **CLI** `--model` name and
 is rejected here with `-32603 Invalid value for config option model`.
 
-**Known limitation:** Kiro Crew's `/api/models` endpoint hardcodes
-`kiro-cli chat --list-models`, so the model *picker* keeps showing kiro-cli's
-catalogue whatever backend is active. This app captures the correct per-session
-list, but does not yet reroute that endpoint — set `agent.model` by hand for now.
+### Known limitation: the model picker shows kiro-cli's list
+
+`GET /api/models` runs `kiro-cli chat --list-models --format json` unconditionally
+— there is no provider branch — so the in-chat model picker lists kiro-cli's
+catalogue whatever backend is active, and a Claude model shows as *"isn't offered
+right now"*.
+
+**An app cannot fix this**, verified against the route registry: every app route
+is dispatched through a single catch-all at `/api/apps/{app_name}/{path:.*}` and
+an app's declared paths are relative to it, so a core route cannot be overridden.
+`AppContext` also exposes no aiohttp application, so the startup hook cannot reach
+the router. This app does capture the correct per-session model list (including
+Claude's, which arrives via `configOptions` rather than `models`), but nothing
+downstream consumes it.
+
+Set `agent.model` by hand — Settings → Chat → Default Model works, and the
+accepted values per harness are listed above.
+
+### Known limitation: no UI page
+
+This app is deliberately headless. A third-party `ui.pages` entry *is* routed by
+the dashboard, but the page renders its **"Agent-only app — no visual interface"**
+placeholder: `entryPoint` and `mountFunction` are manifest fields that appear
+nowhere in the shipped SPA bundle, so an app has no way to supply page content.
+v1.2.0 shipped such a page; v1.3.0 removed it, because a sidebar entry that opens
+a stub is worse than no entry.
+
+Switching backend therefore means editing `agent.acp_backend` in
+`~/.kiro/crew/config.json` and restarting. Note the Settings UI has no provider
+control at all in this build — `acp_backend` appears nowhere in the SPA bundle —
+and chat slots carry no backend field, so per-chat switching does not exist
+either.
 
 ## Prerequisites
 

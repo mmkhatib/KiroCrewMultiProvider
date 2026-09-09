@@ -1,6 +1,6 @@
 {
   "name": "acp-harnesses",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "displayName": "ACP Harnesses",
   "description": "Makes any ACP-speaking coding agent selectable as Kiro Crew's backend — Claude Code, Gemini CLI, Codex CLI — using your own local installs. Registers each harness at gateway startup so it appears in the existing Settings backend selector, resolves the right binary per harness, and speaks each one's ACP dialect. Also restores Kiro Crew's MCP tools on the Claude backend, which the public build leaves empty.",
   "author": "mmkhatib",
@@ -16,26 +16,13 @@
   "backend": {
     "hooks": {
       "on_startup": "hooks:on_startup"
-    },
-    "routes": "routes:register_routes"
+    }
   },
-  "ui": {
-    "pages": [
-      {
-        "route": "/apps/acp-harnesses",
-        "label": "ACP Harnesses",
-        "icon": "Plug"
-      }
-    ]
-  },
+  "_ui_note": "Intentionally headless — no ui.pages. A third-party page is routed by the SPA but renders its 'Agent-only app' placeholder (verified 2026-09-09); entryPoint/mountFunction appear nowhere in the shipped bundle, so there is no way to supply page content. A nav entry that opens a stub is worse than no nav entry.",
   "permissions": {
     "storage": false,
     "cron": false,
-    "network": false,
-    "api": [
-      "/api/apps/acp-harnesses",
-      "/api/apps/acp-harnesses/*"
-    ]
+    "network": false
   },
   "harnesses": [
     {
