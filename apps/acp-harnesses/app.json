@@ -1,0 +1,62 @@
+{
+  "name": "acp-harnesses",
+  "version": "1.0.0",
+  "displayName": "ACP Harnesses",
+  "description": "Makes any ACP-speaking coding agent selectable as Kiro Crew's backend — Claude Code, Gemini CLI, Codex CLI — using your own local installs. Registers each harness at gateway startup so it appears in the existing Settings backend selector, resolves the right binary per harness, and speaks each one's ACP dialect. Also restores Kiro Crew's MCP tools on the Claude backend, which the public build leaves empty.",
+  "author": "mmkhatib",
+  "license": "MIT",
+  "defaultEnabled": false,
+  "highlights": [
+    "Claude Code, Gemini CLI and Codex CLI selectable from the stock Settings dropdown",
+    "Runs your own local install of each harness — nothing is bundled or downloaded",
+    "No file patching: registers in-process at startup, so Kiro Crew updates cannot wipe it",
+    "Restores Kiro Crew MCP tools (cron, spawn, monitor) on the Claude backend",
+    "Refuses to register rather than half-apply if Kiro Crew's internals move"
+  ],
+  "backend": {
+    "hooks": {
+      "on_startup": "hooks:on_startup"
+    }
+  },
+  "permissions": {
+    "storage": false,
+    "cron": false,
+    "network": false
+  },
+  "config": {
+    "harnesses": [
+      {
+        "id": "claude",
+        "label": "Claude Code",
+        "command": "",
+        "args": [],
+        "dialect": "claude",
+        "enabled": true
+      },
+      {
+        "id": "gemini",
+        "label": "Gemini CLI",
+        "command": "gemini",
+        "args": ["--experimental-acp"],
+        "dialect": "standard",
+        "enabled": true
+      },
+      {
+        "id": "kas",
+        "label": "KAS",
+        "command": "",
+        "args": [],
+        "dialect": "native",
+        "enabled": false
+      }
+    ],
+    "inject_mcp_servers": true
+  },
+  "tags": ["acp", "backend", "provider", "claude", "gemini", "codex"],
+  "useCases": [
+    "Route Kiro Crew sessions through a local Claude Code, Gemini CLI or Codex CLI install instead of kiro-cli."
+  ],
+  "configuration": [
+    "Enable and trust the app, restart Kiro Crew, then pick a backend in Settings → agent.acp_backend. On Windows also set agent.sandbox_allow_unsandboxed_exec=true so the harness subprocess may spawn."
+  ]
+}
