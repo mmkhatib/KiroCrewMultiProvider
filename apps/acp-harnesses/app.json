@@ -1,6 +1,6 @@
 {
   "name": "acp-harnesses",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "displayName": "ACP Harnesses",
   "description": "Makes any ACP-speaking coding agent selectable as Kiro Crew's backend — Claude Code, Gemini CLI, Codex CLI — using your own local installs. Registers each harness at gateway startup so it appears in the existing Settings backend selector, resolves the right binary per harness, and speaks each one's ACP dialect. Also restores Kiro Crew's MCP tools on the Claude backend, which the public build leaves empty.",
   "author": "mmkhatib",
@@ -23,44 +23,43 @@
     "cron": false,
     "network": false
   },
-  "config": {
-    "harnesses": [
-      {
-        "id": "claude",
-        "label": "Claude Code",
-        "command": "",
-        "args": [],
-        "dialect": "claude",
-        "enabled": true
-      },
-      {
-        "id": "gemini",
-        "label": "Gemini CLI",
-        "command": "gemini",
-        "args": ["--experimental-acp"],
-        "dialect": "standard",
-        "enabled": true
-      },
-      {
-        "id": "codex",
-        "label": "Codex CLI",
-        "command": "codex-acp",
-        "args": [],
-        "dialect": "standard",
-        "enabled": false,
-        "_note": "Codex CLI does not speak ACP natively; it needs an adapter. Install one (e.g. agentclientprotocol/codex-acp) so 'codex-acp' is on PATH, then set enabled=true. Off by default so the backend list only offers harnesses that can actually start."
-      },
-      {
-        "id": "kas",
-        "label": "KAS",
-        "command": "",
-        "args": [],
-        "dialect": "native",
-        "enabled": false
-      }
-    ],
-    "inject_mcp_servers": true
-  },
+  "harnesses": [
+    {
+      "id": "claude",
+      "label": "Claude Code",
+      "command": "",
+      "args": [],
+      "dialect": "claude",
+      "enabled": true
+    },
+    {
+      "id": "gemini",
+      "label": "Gemini CLI",
+      "command": "gemini",
+      "args": ["--experimental-acp"],
+      "dialect": "standard",
+      "enabled": true
+    },
+    {
+      "id": "codex",
+      "label": "Codex CLI",
+      "command": "codex-acp",
+      "args": [],
+      "dialect": "standard",
+      "enabled": false,
+      "_note": "Codex CLI does not speak ACP natively; it needs an adapter. Install one (e.g. agentclientprotocol/codex-acp) so 'codex-acp' is on PATH, then set enabled=true. Off by default so the backend list only offers harnesses that can actually start."
+    },
+    {
+      "id": "kas",
+      "label": "KAS",
+      "command": "",
+      "args": [],
+      "dialect": "native",
+      "enabled": false
+    }
+  ],
+  "inject_mcp_servers": true,
+  "_config_note": "harnesses and inject_mcp_servers are TOP-LEVEL on purpose. Kiro Crew collects every unknown top-level manifest key into AppManifest.extra, and passes exactly that dict to the hook as ctx.config. Nesting them under a 'config' key would land them at ctx.config['config'] and the hook would silently fall back to its claude-only default.",
   "tags": ["acp", "backend", "provider", "claude", "gemini", "codex"],
   "useCases": [
     "Route Kiro Crew sessions through a local Claude Code, Gemini CLI or Codex CLI install instead of kiro-cli."
