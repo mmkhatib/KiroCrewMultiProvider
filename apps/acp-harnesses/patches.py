@@ -118,15 +118,37 @@ def _make_selectable(ids: list[str], log) -> None:
     log.info("acp-harnesses: registered by widening ACP_BACKENDS_SELECTABLE")
 
 
+_TRUE_ORIGINALS_ATTR = "_acp_harnesses_true_originals"
+
+
 def _patch_client(log, inject_mcp: bool) -> None:
     from kiro_crew.acp import client as C
 
     AcpClient = C.AcpClient
-    _originals["_spawn"] = AcpClient._spawn
-    _originals["set_model"] = AcpClient.set_model
-    _originals["_apply_startup_model"] = AcpClient._apply_startup_model
-    _originals["_capture_available_models"] = AcpClient._capture_available_models
-    _originals["_is_claude"] = AcpClient._is_claude
+
+    # Idempotent, and safe against on_startup firing more than once in the
+    # same gateway process (observed: disabling/re-enabling the app in the
+    # dashboard re-runs on_startup WITHOUT a process restart, contrary to its
+    # own docstring). A naive `_originals["_spawn"] = AcpClient._spawn` on a
+    # SECOND apply would capture our OWN previous wrapper as "the original"
+    # (since AcpClient._spawn is already patched by then) and stack a new
+    # wrapper around it instead of around Kiro Crew's real method — silently
+    # resurrecting whatever bug the earlier generation had, one layer down,
+    # even after that bug was fixed and reapplied. Stashing the true
+    # originals on the CLASS itself, exactly once ever, means every apply —
+    # first or Nth — rebuilds `_originals` from that permanent stash, so
+    # re-patching always wraps the REAL originals with the CURRENT code.
+    true_originals = getattr(AcpClient, _TRUE_ORIGINALS_ATTR, None)
+    if true_originals is None:
+        true_originals = {
+            "_spawn": AcpClient._spawn,
+            "set_model": AcpClient.set_model,
+            "_apply_startup_model": AcpClient._apply_startup_model,
+            "_capture_available_models": AcpClient._capture_available_models,
+            "_is_claude": AcpClient._is_claude,
+        }
+        setattr(AcpClient, _TRUE_ORIGINALS_ATTR, true_originals)
+    _originals.update(true_originals)
 
     def _harness(self):
         return _HARNESSES.get(getattr(self, "_acp_backend", "") or "")

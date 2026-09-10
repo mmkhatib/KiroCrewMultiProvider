@@ -1,6 +1,6 @@
 {
   "name": "acp-harnesses",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "displayName": "ACP Harnesses",
   "description": "Switch Kiro Crew between any ACP-speaking coding agent — Claude Code, Gemini CLI, Codex CLI — from a provider picker in the dashboard, using your own local installs. Registers each harness at gateway startup, speaks each one's ACP dialect, injects a provider + model switcher into the dashboard UI, and corrects the in-chat model picker so it lists the active backend's models instead of kiro-cli's. Also restores Kiro Crew's MCP tools on the Claude backend, which the public build leaves empty.",
   "author": "mmkhatib",
