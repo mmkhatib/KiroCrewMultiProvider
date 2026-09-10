@@ -95,9 +95,38 @@ async def on_startup(ctx: Any) -> None:
         log.warning("acp-harnesses: no harnesses enabled in app config; nothing registered.")
         return
 
-    log.info(
-        "acp-harnesses: registered %s — selectable in Settings as agent.acp_backend "
-        "(restart not needed for the option to appear; a backend CHANGE needs one).",
+    # WARNING, not INFO: agent.log_level ships as "WARNING", so an info line here
+    # is invisible in gateway.log by default — which is what made every earlier
+    # build unverifiable. This is the one line proving the app ran, so it stays
+    # at a level the shipped config actually records.
+    log.warning(
+        "acp-harnesses: registered %s — selectable as agent.acp_backend.",
         ", ".join(repr(i) for i in ids),
     )
     _preflight(ids, harnesses, log)
+
+    # The switcher UI. Deliberately failure-isolated from the ACP patching above:
+    # if the shell seam moved, the harnesses stay registered and usable via
+    # config.json, which is strictly better than refusing both.
+    if bool((getattr(ctx, "config", None) or {}).get("inject_ui", True)):
+        try:
+            from shell import assert_symbols as shell_symbols
+            from shell import install as shell_install
+        except ImportError:
+            from . import shell  # type: ignore[import-not-found]
+
+            shell_symbols, shell_install = shell.assert_symbols, shell.install
+
+        missing = shell_symbols()
+        if missing:
+            log.warning(
+                "acp-harnesses: SPA shell seam moved (%s) — harnesses still work, "
+                "but the provider switcher will not appear; set agent.acp_backend "
+                "in config.json instead.",
+                ", ".join(missing),
+            )
+        else:
+            try:
+                shell_install(log)
+            except Exception:  # noqa: BLE001
+                log.warning("acp-harnesses: shell injection failed", exc_info=True)

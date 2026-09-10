@@ -1,24 +1,26 @@
 {
   "name": "acp-harnesses",
-  "version": "1.3.0",
+  "version": "2.0.0",
   "displayName": "ACP Harnesses",
-  "description": "Makes any ACP-speaking coding agent selectable as Kiro Crew's backend — Claude Code, Gemini CLI, Codex CLI — using your own local installs. Registers each harness at gateway startup so it appears in the existing Settings backend selector, resolves the right binary per harness, and speaks each one's ACP dialect. Also restores Kiro Crew's MCP tools on the Claude backend, which the public build leaves empty.",
+  "description": "Switch Kiro Crew between any ACP-speaking coding agent — Claude Code, Gemini CLI, Codex CLI — from a provider picker in the dashboard, using your own local installs. Registers each harness at gateway startup, speaks each one's ACP dialect, injects a provider + model switcher into the dashboard UI, and corrects the in-chat model picker so it lists the active backend's models instead of kiro-cli's. Also restores Kiro Crew's MCP tools on the Claude backend, which the public build leaves empty.",
   "author": "mmkhatib",
   "license": "MIT",
   "defaultEnabled": false,
   "highlights": [
-    "Claude Code, Gemini CLI and Codex CLI selectable from the stock Settings dropdown",
+    "Provider + model switcher pinned in the dashboard, reachable from chat and Settings alike",
+    "Model picker shows the ACTIVE backend's models, not kiro-cli's catalogue",
     "Runs your own local install of each harness — nothing is bundled or downloaded",
-    "No file patching: registers in-process at startup, so Kiro Crew updates cannot wipe it",
+    "No file patching: patches in-process at startup, so Kiro Crew updates cannot wipe it",
     "Restores Kiro Crew MCP tools (cron, spawn, monitor) on the Claude backend",
     "Refuses to register rather than half-apply if Kiro Crew's internals move"
   ],
   "backend": {
     "hooks": {
-      "on_startup": "hooks:on_startup"
+      "on_startup": "hooks:on_startup",
+      "routes": "routes:register_routes"
     }
   },
-  "_ui_note": "Intentionally headless — no ui.pages. A third-party page is routed by the SPA but renders its 'Agent-only app' placeholder (verified 2026-09-09); entryPoint/mountFunction appear nowhere in the shipped bundle, so there is no way to supply page content. A nav entry that opens a stub is worse than no nav entry.",
+  "_ui_note": "There is deliberately no ui.pages entry. A third-party page IS routed by the SPA but renders its 'Agent-only app' placeholder — entryPoint/mountFunction appear nowhere in the shipped bundle (verified 2026-09-09), so an app cannot supply page content that way. The switcher is instead injected into the SPA shell HTML from the startup hook; see shell.py for why that seam works where a route patch would not.",
   "permissions": {
     "storage": false,
     "cron": false,
@@ -31,7 +33,9 @@
       "command": "",
       "args": [],
       "dialect": "claude",
-      "enabled": true
+      "enabled": true,
+      "models": ["default", "sonnet", "opus", "haiku"],
+      "_models_note": "Verified by direct ACP handshake against claude-agent-acp v0.70.0: session/new returns NO 'models' key, and configOptions[id=model] accepts exactly default | sonnet | claude-fable-5[1m] | opus | haiku. 'opus' is Opus 5. The CLI-style name 'claude-opus-5' is NOT accepted here and yields -32603. claude-fable-5[1m] is left out of the picker because the bracketed form risks tripping the canonical-key guard in _model_rejected_reason; set it via config.json if you want it."
     },
     {
       "id": "gemini",
@@ -39,7 +43,8 @@
       "command": "gemini",
       "args": ["--experimental-acp"],
       "dialect": "standard",
-      "enabled": true
+      "enabled": true,
+      "models": ["gemini-2.5-pro", "gemini-2.5-flash"]
     },
     {
       "id": "codex",
@@ -48,7 +53,8 @@
       "args": [],
       "dialect": "standard",
       "enabled": false,
-      "_note": "Codex CLI does not speak ACP natively; it needs an adapter. Install one (e.g. agentclientprotocol/codex-acp) so 'codex-acp' is on PATH, then set enabled=true. Off by default so the backend list only offers harnesses that can actually start."
+      "models": [],
+      "_note": "Codex CLI does not speak ACP natively; it needs an adapter. Install one (e.g. agentclientprotocol/codex-acp) so 'codex-acp' is on PATH, then set enabled=true. Off by default so the picker only offers harnesses that can actually start."
     },
     {
       "id": "kas",
@@ -56,16 +62,19 @@
       "command": "",
       "args": [],
       "dialect": "native",
-      "enabled": false
+      "enabled": false,
+      "models": []
     }
   ],
   "inject_mcp_servers": true,
-  "_config_note": "harnesses and inject_mcp_servers are TOP-LEVEL on purpose. Kiro Crew collects every unknown top-level manifest key into AppManifest.extra, and passes exactly that dict to the hook as ctx.config. Nesting them under a 'config' key would land them at ctx.config['config'] and the hook would silently fall back to its claude-only default.",
+  "inject_ui": true,
+  "_config_note": "harnesses, inject_mcp_servers and inject_ui are TOP-LEVEL on purpose. Kiro Crew collects every unknown top-level manifest key into AppManifest.extra and passes exactly that dict to the hook as ctx.config. Nesting them under a 'config' key would land them at ctx.config['config'] and the hook would silently fall back to its defaults with nothing logged.",
   "tags": ["acp", "backend", "provider", "claude", "gemini", "codex"],
   "useCases": [
-    "Route Kiro Crew sessions through a local Claude Code, Gemini CLI or Codex CLI install instead of kiro-cli."
+    "Route Kiro Crew sessions through a local Claude Code, Gemini CLI or Codex CLI install instead of kiro-cli.",
+    "Switch provider and model from the dashboard instead of hand-editing config.json."
   ],
   "configuration": [
-    "Enable and trust the app, restart Kiro Crew, then pick a backend in Settings → agent.acp_backend. On Windows also set agent.sandbox_allow_unsandboxed_exec=true so the harness subprocess may spawn."
+    "Enable and trust the app, then restart Kiro Crew. The provider switcher appears bottom-right on the next page load. On Windows also set agent.sandbox_allow_unsandboxed_exec=true so the harness subprocess may spawn."
   ]
 }
