@@ -200,6 +200,11 @@ def _patch_client(log, inject_mcp: bool) -> None:
     # ── 3. model setting ──────────────────────────────────────────────────
     # claude-agent-acp has no session/set_model; it exposes a `model`
     # configOption. Spec-compliant agents are the opposite.
+    def _allowed_claude_models(h: dict) -> set[str]:
+        # "" covers an unset agent.model (falsy, never forwarded); "default"
+        # is always accepted regardless of what the harness row lists.
+        return set(h.get("models") or []) | {"default", ""}
+
     async def set_model(self, model_id: str) -> None:
         h = _harness(self)
         if h is not None and h["dialect"] == "standard":
@@ -210,6 +215,18 @@ def _patch_client(log, inject_mcp: bool) -> None:
             self._model = model_id
             self._resolved_model_id = model_id
             return
+        if h is not None and h["dialect"] == "claude":
+            allowed = _allowed_claude_models(h)
+            if model_id not in allowed:
+                # An explicit user action (the picker, or a direct API call) --
+                # surface a clear, actionable error rather than the adapter's
+                # own "-32603 Invalid value for config option model: ...",
+                # which names the adapter's config option, not the picker
+                # value that produced it.
+                raise C.AcpError(
+                    f"acp-harnesses: {model_id!r} is not a model {h['label']!r} "
+                    f"accepts. Choose one of {sorted(allowed - {''})}."
+                )
         return await _originals["set_model"](self, model_id)
 
     async def _apply_startup_model(self) -> None:
@@ -222,6 +239,24 @@ def _patch_client(log, inject_mcp: bool) -> None:
                 {"sessionId": self._session_id, "modelId": self._model},
             )
             return
+        if h is not None and h["dialect"] == "claude":
+            allowed = _allowed_claude_models(h)
+            if self._model not in allowed:
+                # agent.model in config.json can be a leftover from whatever
+                # backend was active before this session's harness was
+                # selected (e.g. a kiro-cli/Bedrock catalogue id) -- unlike an
+                # explicit set_model call, this fires on EVERY session start,
+                # so failing here would break the harness until the user
+                # happens to re-pick a valid model. Skip forwarding instead
+                # and let the adapter fall back to its own default; the next
+                # explicit pick (validated above) corrects agent.model.
+                log.warning(
+                    "acp-harnesses: agent.model %r is not valid for %r "
+                    "(accepts %s); leaving the adapter on its own default "
+                    "instead of forwarding it.",
+                    self._model, h["label"], sorted(allowed - {""}),
+                )
+                return
         return await _originals["_apply_startup_model"](self)
 
     AcpClient.set_model = set_model
@@ -299,6 +334,7 @@ def apply(harnesses: list[dict], *, inject_mcp: bool, log) -> list[str]:
             "id": hid,
             "label": str(h.get("label") or hid),
             "dialect": dialect,
+            "models": [str(m) for m in h.get("models") or []],
             "_argv": ([str(h["command"])] + [str(a) for a in h.get("args") or []])
             if h.get("command")
             else None,
