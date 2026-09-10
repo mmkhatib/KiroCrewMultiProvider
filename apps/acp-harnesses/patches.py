@@ -149,21 +149,25 @@ def _patch_client(log, inject_mcp: bool) -> None:
 
         argv = h.get("_argv")
         if not argv:
-            # claude keeps Kiro Crew's own multi-step resolution (mise, vendored
-            # node_modules, augmented PATH); external harnesses use their command.
-            argv = await asyncio.to_thread(C._resolve_claude_acp_bin)
-            if not argv:
-                raise C.AcpError(
-                    "acp-harnesses: could not resolve the claude-agent-acp entry "
-                    "script. Install it with 'npm i -g "
-                    "@agentclientprotocol/claude-agent-acp'."
-                )
+            # claude (no custom command): let Kiro Crew's own multi-step
+            # resolution run unmodified (mise, vendored node_modules, augmented
+            # PATH). Do NOT call C._resolve_claude_acp_bin() here and stash its
+            # result ourselves — it returns a (argv, search_path) TUPLE, and
+            # original _spawn's own cache read does
+            # `isinstance(cached, tuple)` to decide the cache is populated.
+            # Stashing anything else (a bare list) makes it look unresolved and
+            # original _spawn raises its own "not found" error even when
+            # resolution actually succeeded.
+            return await _originals["_spawn"](self)
 
-        # The cache is a module GLOBAL with no per-client key, so hold the lock
-        # across the whole spawn and restore afterwards.
+        # External harness riding the claude branch: substitute its argv into
+        # the module-global cache. The cache is process-wide with no per-client
+        # key, so hold the lock across the whole spawn and restore afterwards.
+        # Must be a (argv, search_path) tuple to match what original _spawn
+        # unpacks — see the note above.
         async with _spawn_lock:
             saved = C._claude_acp_argv_cache
-            C._claude_acp_argv_cache = list(argv)
+            C._claude_acp_argv_cache = (list(argv), "")
             try:
                 return await _originals["_spawn"](self)
             finally:
