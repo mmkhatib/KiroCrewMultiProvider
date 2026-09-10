@@ -1,14 +1,15 @@
 {
   "name": "acp-harnesses",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "displayName": "ACP Harnesses",
   "description": "Switch Kiro Crew between any ACP-speaking coding agent — Claude Code, Gemini CLI, Codex CLI — from a provider picker in the dashboard, using your own local installs. Registers each harness at gateway startup, speaks each one's ACP dialect, injects a provider + model switcher into the dashboard UI, and corrects the in-chat model picker so it lists the active backend's models instead of kiro-cli's. Also restores Kiro Crew's MCP tools on the Claude backend, which the public build leaves empty.",
   "author": "mmkhatib",
   "license": "MIT",
   "defaultEnabled": false,
   "highlights": [
-    "Provider + model switcher pinned in the dashboard, reachable from chat and Settings alike",
-    "Model picker shows the ACTIVE backend's models, not kiro-cli's catalogue",
+    "One picker: every harness's models listed in the dashboard's OWN model dropdown",
+    "Picking 'Gemini CLI › gemini-2.5-pro' switches backend AND model in one click",
+    "Switch applies in-process — no Kiro Crew restart",
     "Runs your own local install of each harness — nothing is bundled or downloaded",
     "No file patching: patches in-process at startup, so Kiro Crew updates cannot wipe it",
     "Restores Kiro Crew MCP tools (cron, spawn, monitor) on the Claude backend",
@@ -20,7 +21,7 @@
       "routes": "routes:register_routes"
     }
   },
-  "_ui_note": "There is deliberately no ui.pages entry. A third-party page IS routed by the SPA but renders its 'Agent-only app' placeholder — entryPoint/mountFunction appear nowhere in the shipped bundle (verified 2026-09-09), so an app cannot supply page content that way. The switcher is instead injected into the SPA shell HTML from the startup hook; see shell.py for why that seam works where a route patch would not.",
+  "_ui_note": "There is deliberately no ui.pages entry. A third-party page IS routed by the SPA but renders its 'Agent-only app' placeholder — entryPoint/mountFunction appear nowhere in the shipped bundle (verified 2026-09-09), so an app cannot supply page content that way. As of 2.1.0 the app renders NO UI of its own either: it injects a script into the SPA shell (see shell.py) that intercepts /api/models and the slot-model POST, so the harnesses appear as entries in the dashboard's own model picker. Intercepting the data layer instead of grafting DOM is what survives React reconciles and build-hashed class names.",
   "permissions": {
     "storage": false,
     "cron": false,
@@ -75,6 +76,6 @@
     "Switch provider and model from the dashboard instead of hand-editing config.json."
   ],
   "configuration": [
-    "Enable and trust the app, then restart Kiro Crew. The provider switcher appears bottom-right on the next page load. On Windows also set agent.sandbox_allow_unsandboxed_exec=true so the harness subprocess may spawn."
+    "Enable and trust the app, then restart Kiro Crew ONCE so the startup hook runs. After that every harness appears in the normal chat model picker as 'Provider › model', and switching between them needs no further restart. On Windows also set agent.sandbox_allow_unsandboxed_exec=true so the harness subprocess may spawn."
   ]
 }

@@ -96,8 +96,45 @@ async def _state(request: web.Request, ctx: Any) -> web.Response:
     )
 
 
+async def _reload_factory(request: web.Request) -> str:
+    """Rebuild the provider factory in-process. Returns "" on success, else why not.
+
+    Why this is needed at all: ``dashboard/handlers/core.py`` hot-reloads config
+    on exactly two branches — ``agent.provider`` (calls
+    ``sessions.reload_provider_factory()``) and ``agent.model`` /
+    ``agent.reasoning_effort`` (calls ``sessions.refresh_defaults()``).
+    ``agent.acp_backend`` matches NEITHER, so a plain config write leaves the
+    running gateway holding the factory closure built at startup, which captured
+    the OLD backend (``config/loader.py``: ``acp_backend=self.agent.acp_backend``).
+    That — not anything architectural — is the entire reason v2.0.0 had to tell
+    the user to restart.
+
+    ``reload_provider_factory`` is the very call the core makes for a provider
+    switch: reloads config, rebuilds the factory, drains the warm pool, shuts
+    down stale sessions. App route handlers receive the REAL aiohttp request
+    (``route_registry.dispatch`` calls ``route.handler(request, ctx)``), so
+    ``request.app["state"]`` is the live DashboardState.
+
+    Only ever called when the backend actually CHANGED — it clears every session,
+    which is right for a harness switch and far too heavy for a model pick.
+    """
+    try:
+        state = request.app["state"]
+    except (KeyError, AttributeError):
+        return "dashboard state unavailable"
+    sessions = getattr(state, "sessions", None)
+    reload_fn = getattr(sessions, "reload_provider_factory", None)
+    if not callable(reload_fn):
+        return "sessions.reload_provider_factory missing"
+    try:
+        await reload_fn()
+    except Exception as exc:  # noqa: BLE001
+        return f"factory reload failed: {exc}"
+    return ""
+
+
 async def _set_provider(request: web.Request, ctx: Any) -> web.Response:
-    """Persist agent.acp_backend and/or agent.model.
+    """Persist agent.acp_backend and/or agent.model, then apply it live.
 
     Writes through ``update_config_locked`` — the sanctioned atomic writer with
     an advisory sidecar lock — rather than touching config.json directly, so a
@@ -132,6 +169,10 @@ async def _set_provider(request: web.Request, ctx: Any) -> web.Response:
             agent["model"] = model
         return cfg
 
+    # Read the live backend BEFORE writing, so the reload below fires only on a
+    # real change rather than on every model pick that rides this same route.
+    previous = _agent_config()["backend"]
+
     try:
         from kiro_crew.config.loader import update_config_locked
 
@@ -139,15 +180,23 @@ async def _set_provider(request: web.Request, ctx: Any) -> web.Response:
     except Exception as exc:  # noqa: BLE001
         return web.json_response({"error": f"config write failed: {exc}"}, status=500)
 
-    # A backend change only takes effect on a fresh gateway process: the ACP
-    # client is constructed from config at startup and pooled per backend. Say so
-    # rather than letting the UI imply it switched live.
+    # A backend change needs the factory rebuilt or the running gateway keeps
+    # spawning the old harness. Only a genuine change pays for it: the reload
+    # clears every session and drains the warm pool.
+    reload_error = ""
+    if backend is not None and backend != previous:
+        reload_error = await _reload_factory(request)
+
     return web.json_response(
         {
             "ok": True,
             "backend": backend,
             "model": model,
-            "restart_required": backend is not None,
+            # True only when the switch could NOT be applied in-process — the UI
+            # reads this to decide whether to tell the user to restart, so it must
+            # describe what actually happened rather than a blanket assumption.
+            "restart_required": bool(reload_error),
+            "reload_error": reload_error,
         }
     )
 

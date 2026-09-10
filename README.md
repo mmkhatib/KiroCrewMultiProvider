@@ -21,11 +21,15 @@ cannot remove it.
 
 | | |
 |---|---|
-| Provider switcher | pinned bottom-right, on every screen — chat and Settings alike |
-| Model switcher | the active backend's real models |
+| Provider + model switching | one list, in the dashboard's **own** model picker |
+| How a pick reads | `Claude Code › opus`, `Gemini CLI › gemini-2.5-pro` |
+| Switching cost | applied in-process — **no restart** |
 | In-chat model picker | corrected to stop listing kiro-cli's catalogue |
 | Harnesses | Claude Code, Gemini CLI, Codex CLI (adapter), KAS |
 | MCP tools on Claude | restored (cron, spawn, monitor) |
+
+Selecting `Gemini CLI › gemini-2.5-pro` sets the backend *and* the model in one
+click. There is no separate control to find — the app adds no UI of its own.
 
 ## Install
 
@@ -55,7 +59,9 @@ Then, on each machine:
    third-party app. An app cannot grant itself trust; that gate is the point.
 3. **Fully quit and relaunch** Kiro Crew — not a window reload. `on_startup`
    fires once per gateway process, so the PID has to change.
-4. The switcher appears bottom-right on the next page load.
+4. Open the chat model picker — every harness is now listed as `Provider › model`.
+   This first relaunch is the only one you need; switching between harnesses
+   afterwards takes effect immediately.
 
 Confirm it ran — this line is logged at WARNING so the shipped
 `agent.log_level` actually records it:
@@ -88,9 +94,12 @@ the function object at `add_get` time and app hooks run afterwards. The injected
 tag is a same-origin `<script src>`, which the dashboard CSP
 (`script-src 'self' 'unsafe-inline' …`) admits.
 
-The switcher lives in a **shadow root**, not grafted into React's tree: injected
-nodes are destroyed on the next reconciliation, and the class names to anchor to
-are build-hashed and change on every Kiro Crew update.
+The injected script **touches no DOM at all**. Grafting nodes into React's tree
+gets them destroyed on the next reconciliation, and the class names to anchor to
+are build-hashed and change on every Kiro Crew update — so 2.0.0 put a pill in a
+shadow root, and 2.1.0 dropped even that. It intercepts the **data layer**
+instead, which React has no opinion about: `window.fetch` is wrapped once, and
+the harnesses reach the user through the dashboard's own picker.
 
 **On the shell's security contract.** `core.index` says explicitly: do not inject
 server/user/session state, because the shell is served *unauthenticated* on the
@@ -109,9 +118,31 @@ right now"*.
 
 An app **cannot** override that route: every app route dispatches through one
 catch-all at `/api/apps/{app_name}/{path:.*}`, and `AppContext` exposes no
-aiohttp application. But it does not need to. The response is a bare JSON array
-the SPA reads as `model_id || model_name`, so the injected script wraps
-`window.fetch` and rewrites it **in the client that consumes it**.
+aiohttp application. But it does not need to — the injected script wraps
+`window.fetch` and rewrites the response **in the client that consumes it**.
+
+Two interceptions, and the second is what makes one merged picker possible:
+
+| direction | what happens |
+|---|---|
+| `GET /api/models` | kiro's live rows are kept as the `Kiro CLI` group; one group per registered harness is appended. Each entry is `Provider › model`. |
+| `POST /api/chat/slots/{slot}/model` | the composite is split back into `(backend, model)`. If the backend changed it is switched first; then the request is forwarded carrying a **plain** model id. |
+
+The composite therefore never reaches the server — the core only ever sees a
+model string it already accepts.
+
+**Why the composite lives in `model_name`.** The chat picker maps the array with
+`{name: e.model_name}` and ignores `model_id` entirely (`providers-*.js`
+`fetchAvailableModels`), so `model_name` is *both* the label and the value posted
+back. `model_id` is left as the plain id for the Settings/Mochi selector, which
+uses `{value: model_id || model_name, label: model_name}` and so needs no
+interception at all.
+
+**Why the plain ids pass the guard.** `_model_rejected_reason` rejects only
+*top-level canonical registry keys* (`model_registry.json`: `fable-5-1m`,
+`opus-4.8-1m`, `sonnet-4.5`, `haiku-4.5`, `auto`, …). `opus`, `sonnet`, `haiku`
+and the `gemini-2.5-*` ids are aliases or absent, not keys, so every id this app
+forwards passes.
 
 ## Configuring harnesses
 
@@ -146,12 +177,17 @@ For **claude-agent-acp v0.70.0**, verified by handshake: `session/new` returns
 
 ## Known limits
 
-- **Switching backend needs a restart.** The ACP client is built from config at
-  startup and pooled per backend, so a running gateway keeps the old one. The
-  switcher says so when you change provider. Changing *model* does not.
-- **No true per-chat-tab provider.** Chat slots carry no backend field and the
-  client is pooled per backend, so the switcher is global — it applies to new
-  sessions. Per-tab *model* selection already works natively.
+- **No true per-chat-tab provider.** Chat slots carry no backend field, and the
+  factory closure reads one global `agent.acp_backend` for every session it
+  builds, so a switch is global: it applies to all sessions, not just the tab you
+  picked in. Per-tab *model* selection already works natively. (This is not a
+  hard ceiling — providers *are* constructed per session, so an app-supplied
+  factory wrapper consulting a per-slot override could lift it. Not attempted
+  here.)
+- **A backend switch resets sessions.** `reload_provider_factory()` clears every
+  session and drains the warm pool — that is what applying the switch in-process
+  means. Conversation history is replayed, but in-flight turns are not preserved,
+  so switch between turns.
 - **Windows:** `agent.sandbox_allow_unsandboxed_exec = true` is required.
   Windows has no OS-level sandbox backend, so Kiro Crew otherwise refuses to
   spawn any harness subprocess. The app deliberately does not set this — it
