@@ -162,6 +162,36 @@ async def _set_provider(request: web.Request, ctx: Any) -> web.Response:
             return web.json_response(
                 {"error": f"unknown backend {backend!r}"}, status=400
             )
+        # `known` is the STATIC harness list from app.json -- it says nothing
+        # about whether Kiro Crew's own registry actually accepted this id as
+        # selectable. That registration happens once, in the on_startup hook;
+        # if it never ran or never completed (observed: no gateway restart
+        # since enabling, or the hook itself failing/timing out), writing
+        # agent.acp_backend here would silently succeed while
+        # resolve_selected_backend degrades every session back to kiro-cli --
+        # the "I picked Gemini and it's quietly running kiro-cli instead" bug.
+        # Cross-checking the live registry turns that into a clear error
+        # instead of a pick that looks like it worked but never did.
+        if backend not in ("", "kas"):
+            try:
+                from kiro_crew.acp_backends import selectable_backends
+
+                if backend not in selectable_backends():
+                    return web.json_response(
+                        {
+                            "error": (
+                                f"{backend!r} is not registered as selectable yet "
+                                "(acp-harnesses' startup hook may not have "
+                                "finished, or Kiro Crew was never fully "
+                                "restarted after installing/updating this app). "
+                                "Fully quit and relaunch Kiro Crew, then try "
+                                "again."
+                            )
+                        },
+                        status=409,
+                    )
+            except ImportError:
+                pass  # older build without the registry; nothing to cross-check
     if model is not None and not isinstance(model, str):
         return web.json_response({"error": "model must be a string"}, status=400)
     if backend is None and model is None:
