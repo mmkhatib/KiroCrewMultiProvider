@@ -13,10 +13,24 @@
  *   GET  /api/models                  -> merged list, one entry per harness+model
  *   POST /api/chat/slots/{slot}/model -> split the pick, switch backend, forward
  *   POST /api/chat/slots/model        -> same, for the all-slots variant
+ *   GET  /api/agents/resolved-model   -> rewrite the plain id back to composite
  *
  * The dashboard's native picker renders the merged list and sends a pick back
  * through its own code path; we translate on the way out. No pill, no shadow
  * root, no grafted nodes, nothing to break on a Vite rebuild.
+ *
+ * Why /api/agents/resolved-model has to be intercepted too: the picker does
+ * not decide what to highlight as "current" from the models list itself. A
+ * separate call, `providers-*.js` `resolveModel` -> `agentResolvedModel` ->
+ * GET /api/agents/resolved-model, reports which model the session is
+ * ACTUALLY running (plain id, e.g. "sonnet"), and the picker highlights
+ * whichever /api/models entry has that exact `name`. Since every name in our
+ * merged list is a composite ("Claude Code › sonnet"), the plain id this
+ * endpoint returns never matches ANY entry -- not even a live kiro-cli
+ * session's, because buildMerged renamed those too ("Kiro CLI › sonnet") --
+ * so the picker falls back to showing nothing recognized, which renders as
+ * "auto" regardless of what was actually picked. Rewriting this response the
+ * same way buildMerged renamed the list is what makes the two agree.
  *
  * Contracts this depends on (verified against the shipped build, not assumed):
  *   - The CHAT picker maps the /api/models array with `{name: e.model_name}` and
@@ -68,6 +82,29 @@
       if ((p.label || p.id) === label) return p.id;
     }
     return undefined;
+  }
+
+  /* Backend id -> the label buildMerged wraps its models in. "" (kiro-cli) is
+     hardcoded to KIRO_LABEL rather than looked up, exactly like buildMerged's
+     own kiro-row branch -- state.providers carries "Kiro CLI (default)" for
+     that id (the Settings label), a different string than the constant
+     buildMerged actually names kiro rows with. */
+  function labelForBackend(id) {
+    if (id === "") return KIRO_LABEL;
+    for (var i = 0; i < state.providers.length; i++) {
+      var p = state.providers[i];
+      if (p.id === id) return p.label || p.id;
+    }
+    return null;
+  }
+
+  /* Plain resolved model id -> the composite name it appears under in the
+     merged /api/models list, so the picker's by-name match can find it. */
+  function compositeForCurrent(model) {
+    if (!model || model === "auto") return "auto";
+    var label = labelForBackend(state.current);
+    if (label === null) return model; /* unknown backend: pass through untouched */
+    return label + SEP + model;
   }
 
   /* ---- GET /api/models ----------------------------------------------------
@@ -210,6 +247,36 @@
       });
   }
 
+  /* ---- GET /api/agents/resolved-model --------------------------------------
+   * Rewrite the plain model id the core reports back to the composite name it
+   * appears under in our merged list, so the picker's by-name match actually
+   * finds and highlights it. See the file-header comment for why this call
+   * exists at all.
+   */
+  function handleResolvedModel(input, init) {
+    return nativeFetch(input, init).then(
+      function (r) {
+        if (!r.ok) return r;
+        return r
+          .json()
+          .then(function (j) {
+            if (!j || typeof j !== "object" || typeof j.model !== "string") {
+              return jsonResponse(j || {});
+            }
+            return jsonResponse(
+              Object.assign({}, j, { model: compositeForCurrent(j.model) })
+            );
+          })
+          .catch(function () {
+            return jsonResponse({});
+          });
+      },
+      function () {
+        return nativeFetch(input, init);
+      }
+    );
+  }
+
   /* ---- the one wrapper ---------------------------------------------------- */
   window.fetch = function (input, init) {
     var url = typeof input === "string" ? input : (input && input.url) || "";
@@ -219,6 +286,9 @@
 
     if (method === "GET" && url.indexOf("/api/models") !== -1) {
       return handleModels(input, init);
+    }
+    if (method === "GET" && url.indexOf("/api/agents/resolved-model") !== -1) {
+      return handleResolvedModel(input, init);
     }
     if (
       method === "POST" &&
