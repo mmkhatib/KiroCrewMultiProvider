@@ -54,6 +54,12 @@ def _agent_config() -> dict:
     agent = KiroCrewConfig.load().agent
     return {
         "backend": getattr(agent, "acp_backend", "") or "",
+        # Crew-member DM sessions (kiro_crew.members.select_provider_backend)
+        # route through THIS field instead of acp_backend, defaulting to
+        # "kas" -- entirely independent of the switcher unless we also set
+        # it. Tracked here so _set_provider can tell whether either one
+        # actually changed.
+        "member_backend": getattr(agent, "member_acp_backend", "") or "",
         "model": getattr(agent, "model", "") or "",
     }
 
@@ -165,13 +171,25 @@ async def _set_provider(request: web.Request, ctx: Any) -> web.Response:
         agent = cfg.setdefault("agent", {})
         if backend is not None:
             agent["acp_backend"] = backend
+            # Crew-member DM sessions read member_acp_backend instead of
+            # acp_backend (kiro_crew.members.select_provider_backend) and
+            # default to "kas", entirely independent of this switcher unless
+            # we also set it here. Mirrored rather than left alone: a user
+            # picking a harness in the one switcher this app exposes means
+            # "use this everywhere", not "use this for the default session
+            # only, leave every crew-member DM on kas".
+            agent["member_acp_backend"] = backend
         if model is not None:
             agent["model"] = model
         return cfg
 
-    # Read the live backend BEFORE writing, so the reload below fires only on a
-    # real change rather than on every model pick that rides this same route.
-    previous = _agent_config()["backend"]
+    # Read the live backend(s) BEFORE writing, so the reload below fires only
+    # on a real change rather than on every model pick that rides this same
+    # route -- and fires for a member-only change too, since member sessions
+    # are built through the same pooled factory as the default one.
+    previous = _agent_config()
+    previous_backend = previous["backend"]
+    previous_member_backend = previous["member_backend"]
 
     try:
         from kiro_crew.config.loader import update_config_locked
@@ -184,7 +202,9 @@ async def _set_provider(request: web.Request, ctx: Any) -> web.Response:
     # spawning the old harness. Only a genuine change pays for it: the reload
     # clears every session and drains the warm pool.
     reload_error = ""
-    if backend is not None and backend != previous:
+    if backend is not None and (
+        backend != previous_backend or backend != previous_member_backend
+    ):
         reload_error = await _reload_factory(request)
 
     return web.json_response(
