@@ -99,10 +99,15 @@
   }
 
   /* Plain resolved model id -> the composite name it appears under in the
-     merged /api/models list, so the picker's by-name match can find it. */
-  function compositeForCurrent(model) {
+     merged /api/models list, so the picker's by-name match can find it.
+     *backend* defaults to state.current (the resolved-model call has no
+     other way to know which backend it's asking about); handleSlotModel
+     passes the pick's OWN backend explicitly since the response being
+     rewritten there is for exactly that pick, not necessarily whatever
+     state.current has settled to yet. */
+  function compositeForCurrent(model, backend) {
     if (!model || model === "auto") return "auto";
-    var label = labelForBackend(state.current);
+    var label = labelForBackend(backend === undefined ? state.current : backend);
     if (label === null) return model; /* unknown backend: pass through untouched */
     return label + SEP + model;
   }
@@ -207,7 +212,39 @@
 
     function forward() {
       payload.model = pick.model;
-      return nativeFetch(input, Object.assign({}, init, { body: JSON.stringify(payload) }));
+      return nativeFetch(input, Object.assign({}, init, { body: JSON.stringify(payload) })).then(
+        function (r) {
+          if (!r.ok) return r;
+          return r
+            .json()
+            .then(function (j) {
+              if (!j || typeof j !== "object" || typeof j.model !== "string") {
+                return jsonResponse(j || {});
+              }
+              // The chat composer stores THIS response's `model` directly as
+              // the slot's current value (client-*.js: `(await
+              // J.chatSlotModel(...))?.model ?? t`) and compares it against
+              // /api/models entries by NAME to decide what to check -- it
+              // does not re-fetch anything afterward. Forwarding the real
+              // server's plain id (e.g. "opus") leaves that stored value
+              // matching nothing in our composite-named list, so the picker
+              // shows no selection (falls back to "auto") until the next
+              // fresh chat mount pulls a composite-correct value from a
+              // different source. Rewriting it here the same way
+              // buildMerged names the list entry is what makes the two
+              // agree immediately, in an existing chat, without a reload.
+              return jsonResponse(
+                Object.assign({}, j, { model: compositeForCurrent(j.model, pick.backend) })
+              );
+            })
+            .catch(function () {
+              return jsonResponse({});
+            });
+        },
+        function () {
+          return nativeFetch(input, init);
+        }
+      );
     }
 
     if (pick.backend === state.current) return forward();
