@@ -277,11 +277,62 @@
               "restart Kiro Crew for it to take effect."
           );
         }
-        return forward();
+        return reloadSlotThenForward();
       })
       .catch(function () {
-        return forward();
+        return reloadSlotThenForward();
       });
+
+    /* Reloading the factory does not touch a session THIS chat already has --
+     * the core's own model-switch path (chat_handlers._try_live_model_switch)
+     * only ever tries session/set_model on whatever provider is already live,
+     * with no check that its backend still matches what was just configured.
+     * On an existing chat that "live switch" keeps succeeding on the OLD
+     * backend (a portable id like "opus" often resolves to SOMETHING there
+     * too), so api_chat_slot_model's reset fallback -- the one path that
+     * would actually rebuild on the new backend -- never triggers, and the
+     * chat is stuck on whatever backend it started with for its entire
+     * lifetime, not just its first message. POST .../slots/{slot}/reload
+     * (chat_handlers.api_chat_slot_reload) is the supported way to force
+     * that rebuild: tears the process down and relaunches it with the
+     * conversation preserved via session/load, which is exactly the tool
+     * Kiro Crew's own agent/workspace switch handlers use for the same
+     * problem. Best-effort: forward() runs regardless of the outcome here,
+     * since a failed reload attempt (e.g. a turn in flight) shouldn't block
+     * the rest of the flow -- the model pick's own guards handle that case.
+     */
+    function reloadSlotThenForward() {
+      var slotName = typeof input === "string" ? _slotNameFromUrl(input) : null;
+      if (!slotName) return forward();
+      return nativeFetch(
+        "/api/chat/slots/" + encodeURIComponent(slotName) + "/reload",
+        { method: "POST", credentials: "same-origin" }
+      )
+        .then(function (r) {
+          return r.json().catch(function () {
+            return {};
+          });
+        })
+        .then(function (rj) {
+          if (rj && rj.error) {
+            console.warn(
+              "[acp-harnesses] session reload after backend switch failed: " + rj.error
+            );
+          }
+          return forward();
+        })
+        .catch(function () {
+          return forward();
+        });
+    }
+  }
+
+  /* Slot name out of a POST .../slots/{slot}/model URL, or null for the
+     all-slots variant (.../slots/model) which names no single slot to
+     reload. */
+  function _slotNameFromUrl(url) {
+    var m = /\/api\/chat\/slots\/([^/]+)\/model(?:\?|$)/.exec(url);
+    return m ? m[1] : null;
   }
 
   /* ---- GET /api/agents/resolved-model --------------------------------------
