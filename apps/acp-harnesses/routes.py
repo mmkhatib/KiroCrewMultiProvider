@@ -136,7 +136,37 @@ async def _reload_factory(request: web.Request) -> str:
         await reload_fn()
     except Exception as exc:  # noqa: BLE001
         return f"factory reload failed: {exc}"
+    _cancel_eager_spawns(state)
     return ""
+
+
+def _cancel_eager_spawns(state: Any) -> int:
+    """Cancel every chat slot's in-flight eager-spawn task. Returns how many.
+
+    Kiro Crew speculatively pre-warms a slot's session ahead of its first
+    message (``chat_runner.schedule_eager_spawn`` — "the multi-second ACP
+    handshake overlaps with the user's think-time"). Its own re-validation
+    (``chat_runner._slot_binding``) re-checks agent/model/project/
+    reasoning_effort/memory_store before registering that session, but NOT
+    backend — so a task that began its handshake under the OLD backend can
+    still register a session under it, even after ``reload_provider_factory``
+    (called just above) has already rebuilt the factory for the NEW one.
+    Observed live: switching provider on a fresh chat, then asking "what
+    provider are you running on" got a genuine kiro-cli answer back, not
+    Claude — this closes that window. Cancelling costs nothing but a
+    cold-start on that slot's actual first message instead of reusing a
+    pre-warm; nothing else depends on the task completing.
+    """
+    slots = getattr(state, "_slots", None)
+    if not isinstance(slots, dict):
+        return 0
+    cancelled = 0
+    for slot in list(slots.values()):
+        task = getattr(slot, "_eager_spawn_task", None)
+        if task is not None and not task.done():
+            task.cancel()
+            cancelled += 1
+    return cancelled
 
 
 async def _set_provider(request: web.Request, ctx: Any) -> web.Response:
