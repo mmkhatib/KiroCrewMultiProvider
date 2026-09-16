@@ -12,9 +12,17 @@ boundary and is the operator's call.
 
 from __future__ import annotations
 
+import json
 import shutil
+from pathlib import Path
 from typing import Any
 
+_APP_DIR = Path(__file__).resolve().parent
+
+# Last-resort fallback if even the on-disk app.json can't be read. Minimal
+# and claude-only on purpose: a config read failure is not the place to
+# guess at what external harnesses (gemini, codex) the operator actually
+# wants running.
 DEFAULT_HARNESSES = [
     {"id": "claude", "label": "Claude Code", "command": "", "args": [],
      "dialect": "claude", "enabled": True,
@@ -22,9 +30,34 @@ DEFAULT_HARNESSES = [
 ]
 
 
-def _harnesses(ctx: Any) -> list[dict]:
+def _effective_config(ctx: Any) -> dict:
+    """``ctx.config``, or this app's own app.json read straight off disk.
+
+    ``ctx.config`` comes from ``AppManifest.to_dict()["extra"]`` via
+    ``LifecycleDispatcher._build_context``'s ``manifest.get("extra", {})`` --
+    but ``to_dict()`` FLATTENS extra into the top-level dict
+    (``d.update(self.extra)``) rather than nesting it, so that lookup is
+    unconditionally ``{}`` on Kiro Crew v0.7.0-insider.2 for every app using
+    extra manifest fields, not just this one (observed live, 2026-09-16:
+    harnesses registered with no models list at all, only the "default"
+    alias forwarding -- ``ctx.config`` was empty, so every read below fell
+    to its default). ``harnesses``/``inject_mcp_servers``/``inject_ui`` are
+    top-level keys in app.json either way, so reading the file directly and
+    treating it the same as ``ctx.config`` sidesteps the regression entirely
+    -- and unlike a hardcoded duplicate, it can never drift from what's
+    actually configured there.
+    """
     cfg = getattr(ctx, "config", None) or {}
-    rows = cfg.get("harnesses")
+    if cfg:
+        return cfg
+    try:
+        return json.loads((_APP_DIR / "app.json").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _harnesses(ctx: Any) -> list[dict]:
+    rows = _effective_config(ctx).get("harnesses")
     if isinstance(rows, list) and rows:
         return [r for r in rows if isinstance(r, dict)]
     return DEFAULT_HARNESSES
@@ -79,7 +112,7 @@ async def on_startup(ctx: Any) -> None:
         apply = patches.apply
 
     harnesses = _harnesses(ctx)
-    inject_mcp = bool((getattr(ctx, "config", None) or {}).get("inject_mcp_servers", True))
+    inject_mcp = bool(_effective_config(ctx).get("inject_mcp_servers", True))
 
     try:
         ids = apply(harnesses, inject_mcp=inject_mcp, log=log)
@@ -109,7 +142,7 @@ async def on_startup(ctx: Any) -> None:
     # The switcher UI. Deliberately failure-isolated from the ACP patching above:
     # if the shell seam moved, the harnesses stay registered and usable via
     # config.json, which is strictly better than refusing both.
-    if bool((getattr(ctx, "config", None) or {}).get("inject_ui", True)):
+    if bool(_effective_config(ctx).get("inject_ui", True)):
         try:
             from shell import assert_symbols as shell_symbols
             from shell import install as shell_install
