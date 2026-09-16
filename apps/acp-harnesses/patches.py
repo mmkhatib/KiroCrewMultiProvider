@@ -328,57 +328,72 @@ def _patch_client(log, inject_mcp: bool) -> None:
         AcpClient._claude_session_mcp_servers = _claude_session_mcp_servers
 
 
-def _patch_model_namespace(log) -> None:
-    """Force claude-dialect harnesses onto the untranslated "acp" model
-    namespace, not Kiro Crew's own "claude_code" one.
+def _patch_capabilities(log) -> None:
+    """Stop Kiro Crew's capability system from treating a claude-dialect
+    harness as ITS OWN native "claude_code" integration.
 
     Kiro Crew's newer capability system (kiro_crew.agent_sdk.capabilities)
-    decides a backend's model_id_namespace purely from its ID STRING
-    (is_claude_backend_name / model_registry_namespace) — it cannot tell
-    "the id happens to be 'claude'" from "this IS Kiro Crew's own native
-    Claude Code integration". Since this app reuses Kiro Crew's reserved
-    ACP_BACKEND_CLAUDE id (needed to ride the _is_claude / protocol-version-1
-    branch — see the module docstring), any dialect=="claude" harness gets
-    silently assigned the "claude_code" namespace too — which the
-    dashboard's model-switch path (_wire_model_id in chat_handlers.py) uses
-    to translate a plain alias like "opus" into a Bedrock inference-profile
-    id ("global.anthropic.claude-opus-4-8[1m]") before ever reaching
-    claude-agent-acp. That id is meaningless to a local claude-agent-acp
-    install and gets rejected — verified live against v0.7.0-insider.2:
-    ``to_provider_id("opus", "claude_code")`` ==
-    ``"global.anthropic.claude-opus-4-8[1m]"``, while "default"/"auto" pass
-    through unchanged — matching the exact "only auto works" symptom
-    reported live.
+    decides a backend's model_id_namespace AND provider_seam purely from its
+    ID STRING (is_claude_backend_name / model_registry_namespace) — it
+    cannot tell "the id happens to be 'claude'" from "this IS Kiro Crew's
+    own native Claude Code integration". Since this app reuses Kiro Crew's
+    reserved ACP_BACKEND_CLAUDE id (needed to ride the _is_claude /
+    protocol-version-1 branch — see the module docstring), any
+    dialect=="claude" harness gets silently assigned BOTH:
+
+    - model_id_namespace="claude_code", which the dashboard's model-switch
+      path (_wire_model_id in chat_handlers.py) uses to translate a plain
+      alias like "opus" into a Bedrock inference-profile id
+      ("global.anthropic.claude-opus-4-8[1m]") before ever reaching
+      claude-agent-acp — meaningless to a local install, and rejected.
+      Verified live against v0.7.0-insider.2:
+      ``to_provider_id("opus", "claude_code")`` ==
+      ``"global.anthropic.claude-opus-4-8[1m]"``.
+    - provider_seam=PROVIDER_CLAUDE_CODE, which chat_runner._backfill_
+      canonical_model (via is_claude_code(provider_seam)) uses to
+      CANONICALIZE the session's resolved model back into Kiro Crew's own
+      claude_code dropdown spelling (e.g. "sonnet" -> "sonnet-4.6-1m") and
+      PERSIST it into slot.model. Confirmed live: after a successful
+      Claude Code sonnet pick, switching to a completely different backend
+      (KAS) failed with "account does not have access to model
+      'sonnet-4.6-1m'" — the backfilled claude_code spelling had been
+      carried over as the new session's startup model, which is
+      meaningless outside that namespace. Same root cause as the
+      Bedrock-translation bug, different call site (chat_runner.py, not
+      chat_handlers.py).
 
     Best-effort and version-tolerant: capabilities_for and the module it
     lives in are a recent addition, so any import failure here just leaves
-    an older build's (already-correct, untranslated) behaviour alone.
+    an older build's (already-correct) behaviour alone.
     """
     try:
         from dataclasses import replace as _replace
 
         from kiro_crew.agent_sdk.capabilities import MODEL_NAMESPACE_ACP
+        from kiro_crew.agent_sdk.provider_identity import PROVIDER_ACP
         from kiro_crew.providers import acp as _provider_mod
 
         original = _provider_mod.capabilities_for
     except Exception:  # noqa: BLE001
-        log.debug("acp-harnesses: capability-namespace patch unavailable", exc_info=True)
+        log.debug("acp-harnesses: capability patch unavailable", exc_info=True)
         return
 
     def capabilities_for(backend: str):
         cap = original(backend)
         h = _HARNESSES.get(backend)
-        if (
-            h is not None
-            and h["dialect"] == "claude"
-            and cap.model_id_namespace != MODEL_NAMESPACE_ACP
-        ):
-            return _replace(cap, model_id_namespace=MODEL_NAMESPACE_ACP)
-        return cap
+        if h is None or h["dialect"] != "claude":
+            return cap
+        changes = {}
+        if cap.model_id_namespace != MODEL_NAMESPACE_ACP:
+            changes["model_id_namespace"] = MODEL_NAMESPACE_ACP
+        if cap.provider_seam != PROVIDER_ACP:
+            changes["provider_seam"] = PROVIDER_ACP
+        return _replace(cap, **changes) if changes else cap
 
     _provider_mod.capabilities_for = capabilities_for
     log.info(
-        "acp-harnesses: pinned claude-dialect harnesses to the untranslated model namespace"
+        "acp-harnesses: pinned claude-dialect harnesses off Kiro Crew's own "
+        "claude_code model namespace and provider seam"
     )
 
 
@@ -424,5 +439,5 @@ def apply(harnesses: list[dict], *, inject_mcp: bool, log) -> list[str]:
         _widen_known(external)
     _make_selectable(ids, log)
     _patch_client(log, inject_mcp)
-    _patch_model_namespace(log)
+    _patch_capabilities(log)
     return ids
