@@ -81,16 +81,33 @@ def assert_symbols() -> list[str]:
 
 
 def _widen_known(ids: list[str]) -> None:
-    """Add ids to ``ACP_BACKENDS_KNOWN`` — the provider-construction gate."""
-    from kiro_crew.acp import types as T
+    """Add ids to every module's own ``ACP_BACKENDS_KNOWN`` — the
+    provider-construction gate ``register_selectable_backend`` checks.
 
-    T.ACP_BACKENDS_KNOWN = frozenset(set(T.ACP_BACKENDS_KNOWN) | set(ids))
-    try:  # newer builds own the constant here and re-export it
-        from kiro_crew import acp_backends as B
+    Which module actually OWNS this frozenset has moved across Kiro Crew
+    versions: ``kiro_crew.acp.types`` -> ``kiro_crew.acp_backends`` ->
+    ``kiro_crew.agent_sdk.backends`` (confirmed against a real
+    v0.7.0-insider.2 failure: ``register_selectable_backend``, now DEFINED
+    in ``agent_sdk.backends``, reads THAT module's own ``ACP_BACKENDS_KNOWN``
+    global — rebinding a same-named import in ``acp_backends`` or
+    ``acp.types`` does not propagate to it, since Python name rebinding
+    never affects the module a name was imported from). Widening every
+    module that might be the real owner is cheap and safe: on a build where
+    one of these is just a re-export shim for another, its rebind is a
+    harmless no-op alongside the one that actually matters.
+    """
+    import importlib
 
-        B.ACP_BACKENDS_KNOWN = frozenset(set(B.ACP_BACKENDS_KNOWN) | set(ids))
-    except ImportError:
-        pass
+    ids_set = set(ids)
+    for modname in ("kiro_crew.acp.types", "kiro_crew.acp_backends", "kiro_crew.agent_sdk.backends"):
+        try:
+            mod = importlib.import_module(modname)
+        except ImportError:
+            continue
+        current = getattr(mod, "ACP_BACKENDS_KNOWN", None)
+        if current is None:
+            continue
+        mod.ACP_BACKENDS_KNOWN = frozenset(set(current) | ids_set)
 
 
 def _make_selectable(ids: list[str], log) -> None:
