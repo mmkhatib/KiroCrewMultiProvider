@@ -17,7 +17,8 @@ from typing import Any
 
 DEFAULT_HARNESSES = [
     {"id": "claude", "label": "Claude Code", "command": "", "args": [],
-     "dialect": "claude", "enabled": True},
+     "dialect": "claude", "enabled": True,
+     "models": ["default", "sonnet", "opus", "haiku"]},
 ]
 
 
