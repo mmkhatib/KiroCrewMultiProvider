@@ -410,17 +410,40 @@
   };
 
   /* Until /state resolves we do not know the harness list, so the wrapper stays
-     a pass-through — the picker shows the stock kiro list rather than a list
-     missing groups it will gain a moment later. */
-  api("/state")
-    .then(function (r) {
-      return r.json();
-    })
-    .then(function (s) {
-      state = Object.assign(state, s, { ready: true });
-    })
-    .catch(function () {
-      /* App disabled or gateway busy: leave fetch as a pass-through so the
-         dashboard behaves exactly as it does without this app. */
-    });
+   * a pass-through — the picker shows the stock kiro list rather than a list
+   * missing groups it will gain a moment later.
+   *
+   * Retries a few times on failure. Observed live: a hard refresh (which
+   * re-initializes the whole page cold, unlike a normal load) can lose a
+   * race against the dashboard's own auth-session setup — this script is
+   * `defer`red and runs early, and /state sits behind the same auth
+   * middleware as every other app route. A failed request here used to be
+   * silent and PERMANENT for the rest of that page load (worse: the old
+   * code never even checked response.ok, so a 403's JSON error body parsed
+   * "successfully" and left state.ready=true with providers still empty —
+   * exactly "only the native list shows up", indistinguishable from the
+   * app being gone). Auth finishes settling within a second or two of load,
+   * so a short bounded retry recovers on its own instead of requiring
+   * another reload.
+   */
+  function bootstrapState(attempt) {
+    api("/state")
+      .then(function (r) {
+        if (!r.ok) throw new Error("state fetch: HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (s) {
+        state = Object.assign(state, s, { ready: true });
+      })
+      .catch(function () {
+        if (attempt < 5) {
+          setTimeout(function () {
+            bootstrapState(attempt + 1);
+          }, 500);
+        }
+        /* Attempts exhausted: leave fetch as a pass-through so the dashboard
+           behaves exactly as it does without this app. */
+      });
+  }
+  bootstrapState(0);
 })();
