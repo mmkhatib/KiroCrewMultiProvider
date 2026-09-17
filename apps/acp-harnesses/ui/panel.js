@@ -304,26 +304,7 @@
     function reloadSlotThenForward() {
       var slotName = typeof input === "string" ? _slotNameFromUrl(input) : null;
       if (!slotName) return forward();
-      return nativeFetch(
-        "/api/chat/slots/" + encodeURIComponent(slotName) + "/reload",
-        { method: "POST", credentials: "same-origin" }
-      )
-        .then(function (r) {
-          return r.json().catch(function () {
-            return {};
-          });
-        })
-        .then(function (rj) {
-          if (rj && rj.error) {
-            console.warn(
-              "[acp-harnesses] session reload after backend switch failed: " + rj.error
-            );
-          }
-          return forward();
-        })
-        .catch(function () {
-          return forward();
-        });
+      return _reloadSlot(slotName, 0).then(forward);
     }
   }
 
@@ -333,6 +314,46 @@
   function _slotNameFromUrl(url) {
     var m = /\/api\/chat\/slots\/([^/]+)\/model(?:\?|$)/.exec(url);
     return m ? m[1] : null;
+  }
+
+  /* POST .../slots/{slot}/reload, retrying a few times on "turn_in_flight".
+   * Observed live: switching provider right after the previous turn's reply
+   * lands often needs two clicks to "stick" -- the reload is refused because
+   * the backend hasn't marked that turn fully settled yet, and since the
+   * caller only ever tried once, the model pick that follows falls through
+   * to the model-set endpoint's own live-switch path, which "succeeds" by
+   * changing the model on the SAME (unswitched) session -- so the first
+   * click looks like it did nothing. A short bounded retry covers the gap
+   * without turning every switch into a long wait: real settling here is a
+   * fraction of a second, not the minutes a genuinely stuck turn would take. */
+  function _reloadSlot(slotName, attempt) {
+    return nativeFetch("/api/chat/slots/" + encodeURIComponent(slotName) + "/reload", {
+      method: "POST",
+      credentials: "same-origin",
+    })
+      .then(function (r) {
+        return r.json().catch(function () {
+          return {};
+        });
+      })
+      .then(function (rj) {
+        if (rj && rj.code === "turn_in_flight" && attempt < 3) {
+          return new Promise(function (resolve) {
+            setTimeout(resolve, 400);
+          }).then(function () {
+            return _reloadSlot(slotName, attempt + 1);
+          });
+        }
+        if (rj && rj.error) {
+          console.warn(
+            "[acp-harnesses] session reload after backend switch failed: " + rj.error
+          );
+        }
+        return rj;
+      })
+      .catch(function () {
+        return {};
+      });
   }
 
   /* ---- GET /api/agents/resolved-model --------------------------------------
