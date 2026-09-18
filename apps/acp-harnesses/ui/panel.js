@@ -148,6 +148,19 @@
       });
     }
 
+    /* patches.py's AcpClient monkeypatches (untranslated model ids, MCP
+       injection, idempotent re-patching) are a SEPARATE step from route
+       registration (this file) and have been observed not to complete on a
+       given gateway boot even though the app loads and /state answers
+       fine. When that happens every non-native harness pick will silently
+       misbehave regardless of what the picker shows -- indistinguishable
+       from a fix that never worked, which is exactly what made several of
+       this app's own bugs hard to pin down. Flagging it directly in the
+       description means a screenshot of the picker settles the question. */
+    var patchWarning = state.patchesActive === false
+      ? "⚠ acp-harnesses patches not active this session — fully restart Kiro Crew. "
+      : "";
+
     state.providers.forEach(function (p) {
       if (p.id === "") return; /* kiro-cli: covered by the live rows above */
       var label = p.label || p.id;
@@ -156,7 +169,7 @@
         out.push({
           model_id: m,
           model_name: label + SEP + m,
-          description: label,
+          description: patchWarning + label,
           provider: p.id,
         });
       });
@@ -434,6 +447,15 @@
       })
       .then(function (s) {
         state = Object.assign(state, s, { ready: true });
+        if (state.patchesActive === false) {
+          console.error(
+            "[acp-harnesses] on_startup's AcpClient patches are NOT active " +
+              "in this gateway process. Claude/Gemini picks will silently " +
+              "misbehave (wrong model ids, no MCP tools) no matter what the " +
+              "picker shows. Fully quit and relaunch Kiro Crew (not just " +
+              "reload the page or toggle the app) to fix this."
+          );
+        }
       })
       .catch(function () {
         if (attempt < 5) {

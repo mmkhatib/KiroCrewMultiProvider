@@ -79,6 +79,31 @@ async def _ui_js(request: web.Request, ctx: Any) -> web.Response:
     )
 
 
+def _client_patches_active() -> bool:
+    """Whether patches.py's AcpClient monkeypatches are actually installed
+    in THIS gateway process right now.
+
+    Registering harnesses (routes.py, this file) and patching AcpClient
+    (patches.py, run from on_startup) are separate steps -- on_startup has
+    been observed, more than once, to not run to completion on a given
+    gateway boot even though the app loads and its routes register fine.
+    When that happens every claude-dialect fix this app makes (untranslated
+    model ids, idempotent re-patching, MCP injection, all of it) is
+    silently inactive, and the symptoms are indistinguishable from a fix
+    that never worked at all -- which is exactly what made several of this
+    app's own bugs so hard to diagnose. Checking the marker
+    patches.py._patch_client stashes on AcpClient itself (once, permanently,
+    the first time it successfully runs) turns "did the fix actually load
+    this boot" from a guess into a fact the picker can show directly.
+    """
+    try:
+        from kiro_crew.acp.client import AcpClient
+
+        return bool(getattr(AcpClient, "_acp_harnesses_true_originals", None))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 async def _state(request: web.Request, ctx: Any) -> web.Response:
     """Everything the switcher needs to render, in one round trip."""
     current = _agent_config()
@@ -97,6 +122,12 @@ async def _state(request: web.Request, ctx: Any) -> web.Response:
             "current": current["backend"],
             "model": current["model"],
             "providers": providers,
+            # True only once patches.py's AcpClient patches have actually
+            # run in this process -- see _client_patches_active. False here
+            # means claude/gemini picks will silently misbehave (Bedrock-
+            # translated model ids, no MCP tools, etc.) no matter what the
+            # picker shows, because on_startup did not finish this boot.
+            "patchesActive": _client_patches_active(),
         },
         headers={"Cache-Control": "no-store"},
     )
