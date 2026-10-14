@@ -14,6 +14,12 @@
  *   POST /api/chat/slots/{slot}/model -> split the pick, switch backend, forward
  *   POST /api/chat/slots/model        -> same, for the all-slots variant
  *   GET  /api/agents/resolved-model   -> rewrite the plain id back to composite
+ *   GET  /api/chat/slots[/{slot}]     -> same, for each slot's stored model
+ *   WS   /api/ws  `slots` frame       -> same, for the live slots push
+ *
+ * The last two are what the composer chip actually reads (slot.model from the
+ * store); without them a pick reverted to "auto" on the next slots push and
+ * never survived a reload. See rewriteSlot.
  *
  * The dashboard's native picker renders the merged list and sends a pick back
  * through its own code path; we translate on the way out. No pill, no shadow
@@ -98,18 +104,112 @@
     return null;
   }
 
-  /* Plain resolved model id -> the composite name it appears under in the
-     merged /api/models list, so the picker's by-name match can find it.
-     *backend* defaults to state.current (the resolved-model call has no
-     other way to know which backend it's asking about); handleSlotModel
-     passes the pick's OWN backend explicitly since the response being
-     rewritten there is for exactly that pick, not necessarily whatever
-     state.current has settled to yet. */
+  function providerById(id) {
+    for (var i = 0; i < state.providers.length; i++) {
+      if (state.providers[i].id === id) return state.providers[i];
+    }
+    return null;
+  }
+
+  function offers(p, model) {
+    return !!(p && p.models && p.models.indexOf(model) !== -1);
+  }
+
+  /* Plain model id -> the composite name it appears under in the merged
+     /api/models list, so the picker's by-name match can find it.
+     *backend* defaults to state.current (the resolved-model call and the
+     slots feed have no other way to know which backend a plain id belongs
+     to); handleSlotModel passes the pick's OWN backend explicitly since the
+     response being rewritten there is for exactly that pick, not
+     necessarily whatever state.current has settled to yet.
+
+     A plain id the backend's own list does not offer, but another
+     registered harness does, is labelled with THAT harness: a slot pinned
+     before a switch keeps the model it was pinned to, and naming it under
+     its real provider beats naming a row that does not exist. */
   function compositeForCurrent(model, backend) {
     if (!model || model === "auto") return "auto";
-    var label = labelForBackend(backend === undefined ? state.current : backend);
+    if (model.indexOf(SEP) !== -1) return model; /* already composite */
+    var b = backend === undefined ? state.current : backend;
+    var own = providerById(b);
+    if (b !== "" && own && !offers(own, model)) {
+      for (var i = 0; i < state.providers.length; i++) {
+        var p = state.providers[i];
+        if (p.id !== "" && offers(p, model)) return (p.label || p.id) + SEP + model;
+      }
+    }
+    var label = labelForBackend(b);
     if (label === null) return model; /* unknown backend: pass through untouched */
     return label + SEP + model;
+  }
+
+  /* ---- slot.model feeds ----------------------------------------------------
+   * What the composer chip shows is `slot.model` from the Redux store, matched
+   * by NAME against the /api/models list (ChatPage `displayModel`); the
+   * resolved-model call only fills in when a slot has no model at all. The
+   * store is written by two authoritative feeds -- the WS `slots` frame and
+   * GET /api/chat/slots -- and both carry the server's PLAIN id ("opus").
+   * Against a list whose every name is composite that matches nothing, so the
+   * chip fell back to "auto" on the very next slots frame after a pick, and on
+   * every page load: the pick looked like it never happened or never
+   * persisted. Rewriting both feeds the same way buildMerged names the rows
+   * is what keeps the chip on the pick.
+   */
+  function rewriteSlot(s) {
+    if (!s || typeof s !== "object" || typeof s.model !== "string" || !s.model) return s;
+    var c = compositeForCurrent(s.model);
+    return c === s.model ? s : Object.assign({}, s, { model: c });
+  }
+
+  function rewriteSlots(body) {
+    if (Array.isArray(body)) {
+      var changed = false;
+      var out = body.map(function (s) {
+        var n = rewriteSlot(s);
+        if (n !== s) changed = true;
+        return n;
+      });
+      return changed ? out : body;
+    }
+    if (body && typeof body === "object") {
+      if (typeof body.key === "string") return rewriteSlot(body);
+      if (body.slot && typeof body.slot === "object") {
+        var ns = rewriteSlot(body.slot);
+        return ns === body.slot ? body : Object.assign({}, body, { slot: ns });
+      }
+    }
+    return body;
+  }
+
+  function handleSlots(input, init) {
+    return nativeFetch(input, init).then(function (r) {
+      if (!r.ok) return r;
+      return r
+        .clone()
+        .json()
+        .then(function (j) {
+          var out = rewriteSlots(j);
+          return out === j ? r : jsonResponse(out);
+        })
+        .catch(function () {
+          return r;
+        });
+    });
+  }
+
+  function rewriteFrame(raw) {
+    if (typeof raw !== "string" || raw.indexOf('"slots"') === -1) return raw;
+    var msg;
+    try {
+      msg = JSON.parse(raw);
+    } catch (e) {
+      return raw;
+    }
+    if (!msg || msg.type !== "slots" || !Array.isArray(msg.data)) return raw;
+    var data = rewriteSlots(msg.data);
+    if (data === msg.data) return raw;
+    msg.data = data;
+    return JSON.stringify(msg);
   }
 
   /* ---- GET /api/models ----------------------------------------------------
@@ -399,32 +499,189 @@
     );
   }
 
-  /* ---- the one wrapper ---------------------------------------------------- */
-  window.fetch = function (input, init) {
-    var url = typeof input === "string" ? input : (input && input.url) || "";
-    var method = ((init && init.method) || (input && input.method) || "GET").toUpperCase();
+  /* ---- readiness -----------------------------------------------------------
+   * Settles once /state has answered, or once bootstrapState gives up (or
+   * READY_CAP_MS passes), whichever comes first. Intercepted calls WAIT on it
+   * instead of passing through while it is pending: the picker's model list is
+   * a react-query entry with no refetch interval once it holds a live list, so
+   * a pass-through on the first /api/models call -- which the SPA makes during
+   * the same cold start that /state is still retrying through -- cached the
+   * stock kiro-only list for the life of the page. The harnesses were simply
+   * missing from the picker until something happened to remount it.
+   */
+  var READY_CAP_MS = 5000;
+  var settled = false;
+  var settleWaiters = [];
+  function settle() {
+    if (settled) return;
+    settled = true;
+    var w = settleWaiters;
+    settleWaiters = [];
+    w.forEach(function (fn) {
+      try {
+        fn();
+      } catch (e) {
+        /* one waiter must not starve the rest */
+      }
+    });
+  }
+  function whenSettled(fn) {
+    if (settled) fn();
+    else settleWaiters.push(fn);
+  }
+  var readyPromise = new Promise(function (resolve) {
+    whenSettled(resolve);
+  });
+  setTimeout(settle, READY_CAP_MS);
 
-    if (!state.ready) return nativeFetch(input, init);
-
-    if (method === "GET" && url.indexOf("/api/models") !== -1) {
-      return handleModels(input, init);
-    }
+  /* ---- the one fetch wrapper ---------------------------------------------- */
+  function route(url, method, input) {
+    if (method === "GET" && url.indexOf("/api/models") !== -1) return handleModels;
     if (method === "GET" && url.indexOf("/api/agents/resolved-model") !== -1) {
-      return handleResolvedModel(input, init);
+      return handleResolvedModel;
+    }
+    if (method === "GET" && /\/api\/chat\/slots(?:\/[^/?]+)?(?:\?|$)/.test(url)) {
+      return handleSlots;
     }
     if (
       method === "POST" &&
       typeof input === "string" &&
       /\/api\/chat\/slots\/(?:[^/]+\/)?model(?:\?|$)/.test(url)
     ) {
-      return handleSlotModel(input, init);
+      return handleSlotModel;
     }
-    return nativeFetch(input, init);
+    return null;
+  }
+
+  window.fetch = function (input, init) {
+    var url = typeof input === "string" ? input : (input && input.url) || "";
+    var method = ((init && init.method) || (input && input.method) || "GET").toUpperCase();
+    var handler = route(url, method, input);
+    if (!handler) return nativeFetch(input, init);
+    if (state.ready) return handler(input, init);
+    return readyPromise.then(function () {
+      /* /state never answered: behave exactly as the dashboard does without us. */
+      return state.ready ? handler(input, init) : nativeFetch(input, init);
+    });
   };
 
-  /* Until /state resolves we do not know the harness list, so the wrapper stays
-   * a pass-through — the picker shows the stock kiro list rather than a list
-   * missing groups it will gain a moment later.
+  /* ---- the WebSocket wrapper -----------------------------------------------
+   * The dashboard's `/api/ws` socket pushes the `slots` frame that every chip
+   * reads slot.model from (see rewriteSlot). Frames are rewritten in place;
+   * until readiness settles they are QUEUED rather than passed through, in
+   * arrival order across every listener, so a plain-id frame can never land
+   * in the store ahead of the rewrite and no frame is reordered relative to
+   * another. This is why shell.py loads this script synchronously in <head>:
+   * the socket has to be constructed through this wrapper, and the SPA opens
+   * it during its first render.
+   */
+  var NativeWS = window.WebSocket;
+  if (typeof NativeWS === "function") {
+    var onmessageDesc = Object.getOwnPropertyDescriptor(NativeWS.prototype, "onmessage");
+
+    var isDashboardSocket = function (url) {
+      try {
+        return new URL(String(url), window.location.href).pathname === "/api/ws";
+      } catch (e) {
+        return false;
+      }
+    };
+
+    var hookSocket = function (ws) {
+      var queue = [];
+      var wrapped = new Map();
+
+      function invoke(listener, ev) {
+        if (typeof listener === "function") listener.call(ws, ev);
+        else if (listener && typeof listener.handleEvent === "function") listener.handleEvent(ev);
+      }
+      function rewritten(ev) {
+        var data = state.ready ? rewriteFrame(ev.data) : ev.data;
+        if (data === ev.data) return ev;
+        return new MessageEvent("message", {
+          data: data,
+          origin: ev.origin,
+          lastEventId: ev.lastEventId,
+          source: ev.source,
+          ports: ev.ports ? Array.prototype.slice.call(ev.ports) : [],
+        });
+      }
+      function deliver(listener, ev) {
+        if (settled && !queue.length) return invoke(listener, rewritten(ev));
+        queue.push([listener, ev]);
+      }
+      whenSettled(function () {
+        var q = queue;
+        queue = [];
+        q.forEach(function (item) {
+          try {
+            invoke(item[0], rewritten(item[1]));
+          } catch (e) {
+            setTimeout(function () {
+              throw e;
+            });
+          }
+        });
+      });
+      function wrap(listener) {
+        var w = wrapped.get(listener);
+        if (!w) {
+          w = function (ev) {
+            deliver(listener, ev);
+          };
+          wrapped.set(listener, w);
+        }
+        return w;
+      }
+
+      if (onmessageDesc && onmessageDesc.set) {
+        var current = null;
+        Object.defineProperty(ws, "onmessage", {
+          configurable: true,
+          enumerable: true,
+          get: function () {
+            return current;
+          },
+          set: function (fn) {
+            current = typeof fn === "function" ? fn : null;
+            onmessageDesc.set.call(ws, current ? wrap(current) : null);
+          },
+        });
+      }
+      var nativeAdd = ws.addEventListener;
+      var nativeRemove = ws.removeEventListener;
+      ws.addEventListener = function (type, listener, opts) {
+        if (type !== "message" || !listener) return nativeAdd.call(ws, type, listener, opts);
+        return nativeAdd.call(ws, type, wrap(listener), opts);
+      };
+      ws.removeEventListener = function (type, listener, opts) {
+        if (type !== "message" || !listener || !wrapped.has(listener)) {
+          return nativeRemove.call(ws, type, listener, opts);
+        }
+        return nativeRemove.call(ws, type, wrapped.get(listener), opts);
+      };
+    };
+
+    var PatchedWebSocket = function WebSocket(url, protocols) {
+      var ws = protocols === undefined ? new NativeWS(url) : new NativeWS(url, protocols);
+      if (isDashboardSocket(url)) {
+        try {
+          hookSocket(ws);
+        } catch (e) {
+          /* never break the dashboard's socket over our rewrite */
+        }
+      }
+      return ws;
+    };
+    PatchedWebSocket.prototype = NativeWS.prototype;
+    ["CONNECTING", "OPEN", "CLOSING", "CLOSED"].forEach(function (k) {
+      PatchedWebSocket[k] = NativeWS[k];
+    });
+    window.WebSocket = PatchedWebSocket;
+  }
+
+  /* Until /state resolves we do not know the harness list; intercepted calls
+   * wait on readiness (above) rather than serving a list missing groups.
    *
    * Retries a few times on failure. Observed live: a hard refresh (which
    * re-initializes the whole page cold, unlike a normal load) can lose a
@@ -447,6 +704,7 @@
       })
       .then(function (s) {
         state = Object.assign(state, s, { ready: true });
+        settle();
         if (state.patchesActive === false) {
           console.error(
             "[acp-harnesses] on_startup's AcpClient patches are NOT active " +
@@ -462,10 +720,29 @@
           setTimeout(function () {
             bootstrapState(attempt + 1);
           }, 500);
+          return;
         }
-        /* Attempts exhausted: leave fetch as a pass-through so the dashboard
-           behaves exactly as it does without this app. */
+        /* Attempts exhausted: release everything queued on readiness as a
+           pass-through so the dashboard behaves exactly as it does without
+           this app. */
+        settle();
       });
   }
   bootstrapState(0);
+
+  /* The backend is global and can change outside this tab (Settings, another
+     tab, a config edit). Re-read it when the tab comes back so the slots feed
+     labels plain ids with the backend actually live, not the one this page
+     booted on. */
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState !== "visible" || !state.ready) return;
+    api("/state")
+      .then(function (r) {
+        return r.ok ? r.json() : null;
+      })
+      .then(function (s) {
+        if (s) state = Object.assign(state, s, { ready: true });
+      })
+      .catch(function () {});
+  });
 })();

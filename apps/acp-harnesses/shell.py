@@ -40,7 +40,13 @@ from __future__ import annotations
 
 from typing import Any
 
-_TAG = '<script src="/api/apps/acp-harnesses/ui.js" defer></script>'
+# Classic, synchronous, in <head>: it must run BEFORE the SPA's module script so
+# window.WebSocket is wrapped by the time the dashboard opens /api/ws during its
+# first render (panel.js rewrites the `slots` frames the model chip reads). A
+# deferred tag at the end of <body> runs after the module script and races it.
+_TAG = '<script src="/api/apps/acp-harnesses/ui.js"></script>'
+# Earlier builds' tag. Stripped if present so an upgrade never loads it twice.
+_LEGACY_TAG = '<script src="/api/apps/acp-harnesses/ui.js" defer></script>'
 
 _originals: dict[str, Any] = {}
 
@@ -80,14 +86,21 @@ def install(log) -> None:
         hit = cache.get("src")
         if hit is not None and hit is html:
             return cache["out"]
-        if _TAG in html:
-            out = html
-        elif "</body>" in html:
-            out = html.replace("</body>", f"  {_TAG}\n</body>", 1)
+        out = html.replace(_LEGACY_TAG, "")
+        if _TAG in out:
+            pass
+        elif "</head>" in out and "</body>" in out:
+            # Ahead of the bundle's module script when it is in <head> (Vite
+            # puts it there). Module scripts defer, so a sync tag anywhere in
+            # <head> already runs first; leading it just makes that order read
+            # off the HTML instead of off the HTML spec.
+            head_end = out.index("</head>")
+            mod = out.find('<script type="module"', 0, head_end)
+            at = mod if mod != -1 else head_end
+            out = out[:at] + f"{_TAG}\n  " + out[at:]
         else:
-            # No </body> means the static "dashboard not built" guidance page.
-            # Appending would put a script after </html>; leave it alone — there
-            # is no SPA to decorate in that state anyway.
+            # No </head>/</body> means the static "dashboard not built" guidance
+            # page. There is no SPA to decorate in that state; leave it alone.
             out = html
         cache["src"] = html
         cache["out"] = out

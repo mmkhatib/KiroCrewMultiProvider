@@ -131,6 +131,19 @@ Two interceptions, and the second is what makes one merged picker possible:
 The composite therefore never reaches the server — the core only ever sees a
 model string it already accepts.
 
+**Why the slots feeds are rewritten too.** The composer chip does not show the
+pick it sent; it shows `slot.model` from the store, matched by *name* against
+the list (`displayModel`). The store is written by the WebSocket `slots` push
+and `GET /api/chat/slots`, both carrying the server's plain id (`opus`), which
+matches no composite row — so the chip fell back to `auto` on the next push and
+after every reload. Both feeds are rewritten to the composite the list uses.
+That is also why the script is a synchronous `<head>` tag rather than a
+deferred `<body>` one: `window.WebSocket` has to be wrapped before the SPA
+opens `/api/ws`. Until `/state` answers, intercepted calls and socket frames
+wait (bounded at 5 s) instead of passing through, so the picker's first
+`/api/models` call — which react-query never refetches once it holds a live
+list — cannot cache the stock kiro-only list.
+
 **Why the composite lives in `model_name`.** The chat picker maps the array with
 `{name: e.model_name}` and ignores `model_id` entirely (`providers-*.js`
 `fetchAvailableModels`), so `model_name` is *both* the label and the value posted
