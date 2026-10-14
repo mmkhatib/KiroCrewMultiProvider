@@ -2,34 +2,55 @@
 
 A Kiro Crew app that makes any **ACP-speaking coding agent** usable as the
 backend — Claude Code, Gemini CLI, Codex CLI — running your own local installs,
-and adds the **provider + model switcher the dashboard doesn't ship**.
+and lets you **hot-swap provider and model from the chat's own model picker**,
+mid-conversation, without a restart.
 
-Kiro Crew wires `ACP_BACKEND_CLAUDE` fully but withholds it from the *selectable*
-set, and has no id at all for other harnesses, so a persisted
-`agent.acp_backend = "claude"` is coerced back to kiro-cli on every config load:
+## Where Kiro Crew stands, by version
 
-```
-Ignoring agent.acp_backend 'claude' (not selectable in this build)
-```
+| | 0.5.x | 0.6.0+ (native) | with this app |
+|---|---|---|---|
+| Claude Code / Codex selectable | no — coerced back to kiro-cli | yes, Developer → Agent Backend | yes |
+| Gemini CLI | no | no id at all | yes |
+| Where you switch | — | Developer tab, behind Developer Mode | the chat model picker |
+| Switch takes effect | — | after a gateway restart | immediately, in the open chat |
+| Provider + model in one pick | — | no (two separate controls) | yes — `Gemini CLI › gemini-2.5-pro` |
+| Chat picker lists the live backend's models | no (always kiro-cli's) | no (always kiro-cli's) | yes |
+| Kiro Crew MCP tools on Claude | none | native | native on 0.7, restored on 0.5 |
 
-The usual workaround is editing `kiro_crew/acp/types.py` inside the install
-directory — which every Kiro Crew update wipes. This app instead patches
-**in-process at gateway startup**, so nothing on disk changes and an update
-cannot remove it.
+On 0.5.x a persisted `agent.acp_backend = "claude"` was rejected on every config
+load (`Ignoring agent.acp_backend 'claude' (not selectable in this build)`), and
+the workaround was editing `kiro_crew/acp/types.py` inside the install, which
+every update wipes. This app patches **in-process at gateway startup** instead,
+so nothing on disk changes and an update cannot remove it. On 0.6+ the
+registration half overlaps the native one and is harmless; the in-chat
+hot-swap, Gemini and the merged picker are what the app still adds.
 
 ## What you get
 
 | | |
 |---|---|
-| Provider + model switching | one list, in the dashboard's **own** model picker |
+| Provider + model switching | one list, in the dashboard's **own** chat model picker |
 | How a pick reads | `Claude Code › opus`, `Gemini CLI › gemini-2.5-pro` |
 | Switching cost | applied in-process — **no restart** |
-| In-chat model picker | corrected to stop listing kiro-cli's catalogue |
+| Existing chats | switch too: the session is relaunched on the new harness |
+| In-chat model picker | corrected to stop listing only kiro-cli's catalogue |
 | Harnesses | Claude Code, Gemini CLI, Codex CLI (adapter), KAS |
-| MCP tools on Claude | restored (cron, spawn, monitor) |
 
 Selecting `Gemini CLI › gemini-2.5-pro` sets the backend *and* the model in one
 click. There is no separate control to find — the app adds no UI of its own.
+
+### Hot-swapping in an open chat
+
+Picking a row from another provider, in a chat that is already running:
+
+1. persists `agent.acp_backend` (and `agent.member_acp_backend`) and rebuilds
+   the provider factory in-process (`reload_provider_factory`);
+2. reloads **that chat's** session (`POST /api/chat/slots/{slot}/reload`), which
+   relaunches it on the new harness with the conversation kept — without this
+   the open chat would keep running the provider it started on;
+3. sets the model on the new session.
+
+A pick within the same provider skips steps 1–2 and is an ordinary model switch.
 
 ## Install
 
@@ -63,6 +84,9 @@ Then, on each machine:
    This first relaunch is the only one you need; switching between harnesses
    afterwards takes effect immediately.
 
+After **updating** the app, fully relaunch again: the startup patches and the
+shell injection only change on a new gateway process.
+
 Confirm it ran — this line is logged at WARNING so the shipped
 `agent.log_level` actually records it:
 
@@ -72,12 +96,12 @@ acp-harnesses: registered 'claude', 'gemini' — selectable as agent.acp_backend
 
 ## How the UI gets there
 
-Kiro Crew has **no** native control for `agent.acp_backend` (the field is
-hardcoded `enum=["", "kas"]` and the string appears nowhere in the compiled SPA
-bundle), and a third-party `ui.pages` entry renders the **"Agent-only app — no
-visual interface"** placeholder, because `entryPoint`/`mountFunction` are
-manifest fields the shipped bundle never reads. Both were verified against the
-running build, not inferred.
+On 0.5.x Kiro Crew had **no** native control for `agent.acp_backend` (the field
+was hardcoded `enum=["", "kas"]`); 0.6+ has one, but only in the Developer tab
+and restart-based. Either way a third-party `ui.pages` entry renders the
+**"Agent-only app — no visual interface"** placeholder, because
+`entryPoint`/`mountFunction` are manifest fields the shipped bundle never reads,
+so an app cannot add a page of its own.
 
 So the switcher is injected into the SPA shell instead.
 `dashboard/handlers/core.py` serves it as:
@@ -121,12 +145,16 @@ catch-all at `/api/apps/{app_name}/{path:.*}`, and `AppContext` exposes no
 aiohttp application. But it does not need to — the injected script wraps
 `window.fetch` and rewrites the response **in the client that consumes it**.
 
-Two interceptions, and the second is what makes one merged picker possible:
+What it intercepts — the slot-model POST is what makes one merged picker
+possible, the rest keep the picker's display consistent with it:
 
-| direction | what happens |
+| call | what happens |
 |---|---|
 | `GET /api/models` | kiro's live rows are kept as the `Kiro CLI` group; one group per registered harness is appended. Each entry is `Provider › model`. |
-| `POST /api/chat/slots/{slot}/model` | the composite is split back into `(backend, model)`. If the backend changed it is switched first; then the request is forwarded carrying a **plain** model id. |
+| `POST /api/chat/slots/{slot}/model` (and `/slots/model`) | the composite is split back into `(backend, model)`. If the backend changed it is switched and the chat's session reloaded first; then the request is forwarded carrying a **plain** model id, and the response's model is renamed back to the composite. |
+| `GET /api/agents/resolved-model` | plain id → composite, for a slot that has no model of its own yet. |
+| `GET /api/chat/slots[/{slot}]` | each slot's stored `model` → composite. |
+| WebSocket `/api/ws`, `slots` frame | same, for the live slots push. |
 
 The composite therefore never reaches the server — the core only ever sees a
 model string it already accepts.
@@ -199,8 +227,15 @@ For **claude-agent-acp v0.70.0**, verified by handshake: `session/new` returns
   here.)
 - **A backend switch resets sessions.** `reload_provider_factory()` clears every
   session and drains the warm pool — that is what applying the switch in-process
-  means. Conversation history is replayed, but in-flight turns are not preserved,
-  so switch between turns.
+  means. The open chat's conversation is carried over by the session reload, but
+  in-flight turns are not preserved, so switch between turns.
+- **Cross-provider context is the least-verified path.** Switching models inside
+  one provider is routine. Carrying a conversation from, say, Claude Code to
+  Gemini CLI relies on Kiro Crew re-seeding the new harness's session; the code
+  path exists but has not been exercised live for every pair. If the new
+  provider seems to have forgotten the chat, that is where to look.
+- **The Settings default-model selector sets the model only**, not the provider.
+  Use the chat picker to switch providers.
 - **Windows:** `agent.sandbox_allow_unsandboxed_exec = true` is required.
   Windows has no OS-level sandbox backend, so Kiro Crew otherwise refuses to
   spawn any harness subprocess. The app deliberately does not set this — it
@@ -218,17 +253,23 @@ Config writes go through `update_config_locked` — the sanctioned atomic writer
 with an advisory sidecar lock — so a concurrent Settings save cannot interleave.
 The app never changes the sandbox setting.
 
-It also restores Kiro Crew's MCP tools on the Claude backend: the public core
+It also covers Kiro Crew's MCP tools on the Claude backend. On 0.5.x the core
 returns `[]` from `_claude_session_mcp_servers()` and the adapter does not read
-`kirocrew.mcp.json` itself, so a Claude session otherwise has **zero** Crew tools.
-Disable with `inject_mcp_servers: false`. Disable the UI with `inject_ui: false`.
+`kirocrew.mcp.json` itself, so a Claude session has **zero** Crew tools; the app
+supplies the pooled list. 0.7.0 fills that seam natively, so the core's own list
+is used whenever it is non-empty and the app's is only the fallback. Disable with
+`inject_mcp_servers: false`. Disable the UI with `inject_ui: false`.
 
 ## Status
 
-Written against Kiro Crew 0.5.0-insider.1. Every seam above was read from the
-installed build and the ACP values verified by direct handshake. **Not yet
-verified against a live gateway** — check `gateway.log` after restart for the
-registration line.
+First written against Kiro Crew 0.5.0-insider.1; checked against **0.7.0**
+source:
+
+- Startup registration, every `assert_symbols()` seam and the shell injection
+  verified on a 0.7.0 gateway (`registered 'claude', 'gemini'` logged).
+- The picker fixes in 2.5.0 verified against the 0.7.0 dashboard's own data
+  flow and chip-matching rule, and in a real browser for the WebSocket rewrite.
+- End-to-end chat turns per harness were tested by hand on Claude Code only.
 
 ## Licence
 

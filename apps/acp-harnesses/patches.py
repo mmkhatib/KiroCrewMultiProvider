@@ -165,6 +165,11 @@ def _patch_client(log, inject_mcp: bool) -> None:
             "_is_claude": AcpClient._is_claude,
         }
         setattr(AcpClient, _TRUE_ORIGINALS_ATTR, true_originals)
+    # setdefault, not in the literal above: a stash written by a build that
+    # predates this key must gain it without being rebuilt.
+    true_originals.setdefault(
+        "_claude_session_mcp_servers", AcpClient._claude_session_mcp_servers
+    )
     _originals.update(true_originals)
 
     def _harness(self):
@@ -313,12 +318,22 @@ def _patch_client(log, inject_mcp: bool) -> None:
     AcpClient._capture_available_models = _capture_available_models
 
     # ── 5. MCP servers ────────────────────────────────────────────────────
-    # The public core returns [] here, and the claude adapter does not read
-    # kirocrew.mcp.json itself — so a claude session otherwise has ZERO Kiro Crew
-    # tools (no cron, no spawn, no monitor). Falls back to [] on any error, which
-    # is exactly the stock behaviour.
+    # Builds before 0.6 return [] here, and the claude adapter does not read
+    # kirocrew.mcp.json itself — so a claude session there has ZERO Kiro Crew
+    # tools (no cron, no spawn, no monitor). 0.7.0 fills this seam natively
+    # (via the claude_code agent-config mirror), so the core's own answer wins
+    # whenever it has one; the pooled list is only the fallback for an empty
+    # answer. Falls back to [] on any error, which is the stock behaviour.
     if inject_mcp:
+        core_mcp = _originals["_claude_session_mcp_servers"]
+
         def _claude_session_mcp_servers(self) -> list:
+            try:
+                native = core_mcp(self)
+                if native:
+                    return native
+            except Exception:  # noqa: BLE001
+                log.debug("acp-harnesses: core MCP list failed", exc_info=True)
             try:
                 return self._pooled_mcp_servers() or []
             except Exception:  # noqa: BLE001
