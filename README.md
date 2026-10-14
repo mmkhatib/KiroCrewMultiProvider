@@ -1,9 +1,43 @@
-# kirocrew-acp-harnesses
+# Use Claude Code, Codex CLI or Gemini CLI with Kiro Crew
 
-A Kiro Crew app that makes any **ACP-speaking coding agent** usable as the
-backend — Claude Code, Gemini CLI, Codex CLI — running your own local installs,
-and lets you **hot-swap provider and model from the chat's own model picker**,
+**ACP Harnesses** is a Kiro Crew app that lets Claude Code, Codex CLI, Gemini
+CLI or any other **ACP (Agent Client Protocol) coding agent** run as Kiro
+Crew's agent backend instead of kiro-cli, using your own local installs. It
+lets you **hot-swap provider and model from the chat's own model picker**,
 mid-conversation, without a restart.
+
+![The Kiro Crew chat model picker listing Claude Code and Gemini CLI models next to Kiro CLI, with Claude Code › opus selected](apps/acp-harnesses/assets/screenshots/chat-picker.png)
+
+- **Install:** Settings → Apps → External Registries → add
+  `https://github.com/mmkhatib/KiroCrewMultiProvider`, then [trust and restart once](#install).
+- **Works with:** Kiro Crew 0.5.x – 0.7.0 · macOS, Linux, Windows.
+- **Providers:** Claude Code (`claude-agent-acp`), Gemini CLI
+  (`gemini --experimental-acp`), Codex CLI (`codex-acp` adapter), KAS, kiro-cli.
+
+## FAQ
+
+**Can Kiro Crew use Claude Code instead of kiro-cli?**
+Yes. Kiro Crew 0.6+ can select Claude Code natively under Developer → Agent
+Backend, after a restart. This app adds it to the chat model picker instead
+(`Claude Code › opus`, `› sonnet`, `› haiku`), switchable mid-chat with no
+restart, and makes it selectable on 0.5.x too.
+
+**Can I use Codex or OpenAI's Codex CLI with Kiro Crew?**
+Yes, through an ACP adapter such as
+[codex-acp](https://github.com/agentclientprotocol/codex-acp): put `codex-acp`
+on `PATH` and enable the `codex` row in `app.json`.
+
+**Does Kiro Crew support Gemini CLI?**
+Not natively — Kiro Crew has no Gemini backend id. This app registers one and
+drives `gemini --experimental-acp`.
+
+**Can I switch provider in the middle of a conversation?**
+Yes. Pick another provider's model in the chat picker; the open chat's session
+is relaunched on the new harness with the conversation kept. See
+[Hot-swapping in an open chat](#hot-swapping-in-an-open-chat).
+
+**Does it bundle or download any models or CLIs?**
+No. It runs the harnesses you already have installed and signed in to.
 
 ## Where Kiro Crew stands, by version
 
@@ -155,6 +189,8 @@ possible, the rest keep the picker's display consistent with it:
 | `GET /api/agents/resolved-model` | plain id → composite, for a slot that has no model of its own yet. |
 | `GET /api/chat/slots[/{slot}]` | each slot's stored `model` → composite. |
 | WebSocket `/api/ws`, `slots` frame | same, for the live slots push. |
+| `PUT /api/agents/{name}` | the picker's "set as default model for <agent>" row: a `Kiro CLI ›` pick is reduced to its plain id; a harness pick is refused with an explanation (see Known limits). |
+| `GET /api/agents` | each agent's stored model → composite, so that row's "already pinned" check matches. |
 
 The composite therefore never reaches the server — the core only ever sees a
 model string it already accepts.
@@ -236,6 +272,11 @@ For **claude-agent-acp v0.70.0**, verified by handshake: `session/new` returns
   provider seems to have forgotten the chat, that is where to look.
 - **The Settings default-model selector sets the model only**, not the provider.
   Use the chat picker to switch providers.
+- **Only kiro-cli models can be pinned to an agent.** The core validates
+  `agents.<name>.model` against kiro-cli's catalogue whatever backend is live
+  (`'opus' is not a model kiro-cli serves`), so the picker's "set as default
+  model for <agent>" row refuses a harness model with a message saying so.
+  Harness models are picked per chat.
 - **Windows:** `agent.sandbox_allow_unsandboxed_exec = true` is required.
   Windows has no OS-level sandbox backend, so Kiro Crew otherwise refuses to
   spawn any harness subprocess. The app deliberately does not set this — it
@@ -267,9 +308,13 @@ source:
 
 - Startup registration, every `assert_symbols()` seam and the shell injection
   verified on a 0.7.0 gateway (`registered 'claude', 'gemini'` logged).
-- The picker fixes in 2.5.0 verified against the 0.7.0 dashboard's own data
-  flow and chip-matching rule, and in a real browser for the WebSocket rewrite.
-- End-to-end chat turns per harness were tested by hand on Claude Code only.
+- Driven end to end in a real browser against a 0.7.0 gateway (Kiro Crew's
+  offline fake-ACP test mode): every harness listed in the chat picker, a
+  `Claude Code › opus` pick shown in the chip, persisted to
+  `agent.acp_backend`, the open chat's session reloaded, and the pick still
+  shown after a page reload. The screenshot above is from that run.
+- Real chat turns per harness were tested by hand on Claude Code only.
+- Kiro Crew 0.8.0 is out and has not been checked yet.
 
 ## Licence
 

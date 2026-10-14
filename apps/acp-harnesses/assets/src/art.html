@@ -1,0 +1,83 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  :root { --bg:#f6f3ff; --ink:#1d1530; --sub:#5b5270; --acc:#7c3aed; --card:#ffffff; --line:#e4dcf7; --chip:#efe9ff; }
+  body.dark { --bg:#14101f; --ink:#f2edff; --sub:#a99fc2; --acc:#a78bfa; --card:#1f1930; --line:#2f2645; --chip:#2a2140; }
+  * { box-sizing:border-box; margin:0; }
+  body { font-family: "Space Grotesk", -apple-system, "Helvetica Neue", Arial, sans-serif; background:var(--bg); color:var(--ink); }
+  .frame { position:relative; overflow:hidden; background:var(--bg); }
+
+  /* icon */
+  .icon { width:512px; height:512px; background:linear-gradient(145deg,#8b5cf6,#5b21b6); display:flex; align-items:center; justify-content:center; }
+  .icon svg { width:360px; height:360px; }
+
+  /* hero */
+  .hero { width:1200px; height:675px; display:flex; align-items:center; padding:0 72px; gap:56px; }
+  .detail { width:1200px; height:288px; display:flex; align-items:center; padding:0 64px; gap:48px; }
+  .copy h1 { font-size:58px; line-height:1.04; letter-spacing:-1.5px; font-weight:700; }
+  .copy p { margin-top:20px; font-size:24px; line-height:1.4; color:var(--sub); max-width:470px; }
+  .detail .copy h1 { font-size:42px; }
+  .detail .copy p { font-size:19px; margin-top:12px; max-width:520px; }
+  .acc { color:var(--acc); }
+  .picker { flex:none; width:520px; background:var(--card); border:1px solid var(--line); border-radius:18px; box-shadow:0 24px 60px rgba(60,20,120,.18); padding:14px; font-size:20px; }
+  .detail .picker { width:470px; font-size:16px; padding:10px; transform:translateY(40px); }
+  .grp { font-size:13px; letter-spacing:1.4px; text-transform:uppercase; color:var(--sub); padding:12px 12px 6px; }
+  .detail .grp { font-size:11px; padding:6px 10px 4px; }
+  .row { display:flex; align-items:center; justify-content:space-between; padding:11px 12px; border-radius:10px; }
+  .detail .row { padding:7px 10px; }
+  .row .p { color:var(--sub); }
+  .row.on { background:var(--chip); font-weight:600; }
+  .row.on .p { color:var(--acc); }
+  .tick { color:var(--acc); font-weight:700; }
+</style></head>
+<body>
+<div id="icon" class="frame icon">
+  <svg viewBox="0 0 100 100" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <!-- two plugs swapping: provider hot-swap -->
+    <path d="M20 34h46"/><path d="M54 22l12 12-12 12"/>
+    <path d="M80 66H34"/><path d="M46 54L34 66l12 12"/>
+    <circle cx="20" cy="34" r="5" fill="#fff"/><circle cx="80" cy="66" r="5" fill="#fff"/>
+  </svg>
+</div>
+
+<template id="pickerT">
+  <div class="picker">
+    <div class="grp">Kiro CLI</div>
+    <div class="row"><span><span class="p">Kiro CLI ›</span> auto</span></div>
+    <div class="grp">Claude Code</div>
+    <div class="row on"><span><span class="p">Claude Code ›</span> opus</span><span class="tick">✓</span></div>
+    <div class="row"><span><span class="p">Claude Code ›</span> sonnet</span></div>
+    <div class="grp">Gemini CLI</div>
+    <div class="row"><span><span class="p">Gemini CLI ›</span> gemini-2.5-pro</span></div>
+    <div class="row"><span><span class="p">Gemini CLI ›</span> gemini-2.5-flash</span></div>
+  </div>
+</template>
+
+<div id="hero" class="frame hero">
+  <div class="copy">
+    <h1>Claude Code, Codex &amp; Gemini<br><span class="acc">inside Kiro Crew.</span></h1>
+    <p>Switch provider and model from the chat picker. Mid-conversation, no restart.</p>
+  </div>
+  <div class="slot"></div>
+</div>
+
+<div id="social" class="frame hero" style="width:1280px;height:640px;padding:0 84px">
+  <div class="copy">
+    <h1>Claude Code, Codex &amp; Gemini<br><span class="acc">inside Kiro Crew.</span></h1>
+    <p>Hot-swap provider and model from the chat picker. Open-source Kiro Crew app.</p>
+  </div>
+  <div class="slot"></div>
+</div>
+
+<div id="detail" class="frame detail">
+  <div class="copy">
+    <h1>Any ACP agent. <span class="acc">One picker.</span></h1>
+    <p>Hot-swap Claude Code, Codex CLI, Gemini CLI or kiro-cli from the chat.</p>
+  </div>
+  <div class="slot"></div>
+</div>
+<script>
+  document.querySelectorAll('.slot').forEach(s => s.replaceWith(document.getElementById('pickerT').content.cloneNode(true)));
+  if (location.hash === '#dark') document.body.classList.add('dark');
+</script>
+</body></html>

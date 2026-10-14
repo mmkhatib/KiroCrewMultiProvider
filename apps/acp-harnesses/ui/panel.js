@@ -16,6 +16,8 @@
  *   GET  /api/agents/resolved-model   -> rewrite the plain id back to composite
  *   GET  /api/chat/slots[/{slot}]     -> same, for each slot's stored model
  *   WS   /api/ws  `slots` frame       -> same, for the live slots push
+ *   PUT  /api/agents/{name}           -> composite pin reduced to the plain id
+ *   GET  /api/agents                  -> each agent's model -> composite
  *
  * The last two are what the composer chip actually reads (slot.model from the
  * store); without them a pick reverted to "auto" on the next slots push and
@@ -499,6 +501,78 @@
     );
   }
 
+  /* ---- agent model pins ----------------------------------------------------
+   * The picker's "Set <model> as default model for <agent>" row PUTs the
+   * row's name -- our composite -- to /api/agents/{name} as `model`, which
+   * would persist "Claude Code › opus" into agents.<name>.model and hand it to
+   * the harness verbatim on the next spawn. A pin is model-only (it never
+   * switches backend), so the composite is reduced to its plain id on the way
+   * out. GET /api/agents is renamed the other way so the row's "already
+   * pinned" check, which compares the agent's stored model against the chip's
+   * composite, can match.
+   *
+   * Only kiro-cli models can be pinned: the core validates agents.<name>.model
+   * against kiro-cli's catalogue whatever backend is live (observed on 0.7.0:
+   * `'opus' is not a model kiro-cli serves`). A harness pick is refused here
+   * with a message that says so, rather than forwarded to fail with one that
+   * talks about kiro-cli models the user never picked.
+   */
+  function handleAgentPut(input, init) {
+    var payload;
+    try {
+      payload = JSON.parse((init && init.body) || "");
+    } catch (e) {
+      return nativeFetch(input, init);
+    }
+    var pick = payload && typeof payload === "object" ? splitPick(payload.model) : null;
+    if (!pick) return nativeFetch(input, init);
+    if (pick.backend !== "") {
+      var label = labelForBackend(pick.backend) || pick.backend;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error:
+              "Kiro Crew can only pin kiro-cli models to an agent. " +
+              label + " models apply per chat; pick one from the chat's model picker instead.",
+          }),
+          { status: 400, headers: { "Content-Type": "application/json" } }
+        )
+      );
+    }
+    payload.model = pick.model;
+    return nativeFetch(input, Object.assign({}, init, { body: JSON.stringify(payload) }));
+  }
+
+  function rewriteAgent(a) {
+    if (!a || typeof a !== "object" || typeof a.model !== "string" || !a.model) return a;
+    var c = compositeForCurrent(a.model);
+    return c === a.model ? a : Object.assign({}, a, { model: c });
+  }
+
+  function handleAgents(input, init) {
+    return nativeFetch(input, init).then(function (r) {
+      if (!r.ok) return r;
+      return r
+        .clone()
+        .json()
+        .then(function (j) {
+          var list = Array.isArray(j) ? j : j && Array.isArray(j.agents) ? j.agents : null;
+          if (!list) return r;
+          var changed = false;
+          var out = list.map(function (a) {
+            var n = rewriteAgent(a);
+            if (n !== a) changed = true;
+            return n;
+          });
+          if (!changed) return r;
+          return jsonResponse(Array.isArray(j) ? out : Object.assign({}, j, { agents: out }));
+        })
+        .catch(function () {
+          return r;
+        });
+    });
+  }
+
   /* ---- readiness -----------------------------------------------------------
    * Settles once /state has answered, or once bootstrapState gives up (or
    * READY_CAP_MS passes), whichever comes first. Intercepted calls WAIT on it
@@ -542,6 +616,10 @@
     }
     if (method === "GET" && /\/api\/chat\/slots(?:\/[^/?]+)?(?:\?|$)/.test(url)) {
       return handleSlots;
+    }
+    if (method === "GET" && /\/api\/agents(?:\?|$)/.test(url)) return handleAgents;
+    if (method === "PUT" && typeof input === "string" && /\/api\/agents\/[^/?]+(?:\?|$)/.test(url)) {
+      return handleAgentPut;
     }
     if (
       method === "POST" &&

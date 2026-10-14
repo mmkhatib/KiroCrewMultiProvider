@@ -1,18 +1,26 @@
 {
   "name": "acp-harnesses",
-  "version": "2.5.1",
+  "version": "2.6.0",
   "displayName": "ACP Harnesses",
-  "description": "Switch Kiro Crew between any ACP-speaking coding agent — Claude Code, Gemini CLI, Codex CLI — from a provider picker in the dashboard, using your own local installs. Registers each harness at gateway startup, speaks each one's ACP dialect, injects a provider + model switcher into the dashboard UI, and corrects the in-chat model picker so it lists the active backend's models instead of kiro-cli's. Also restores Kiro Crew's MCP tools on the Claude backend, which the public build leaves empty.",
+  "description": "Use Claude Code, Codex CLI or Gemini CLI as the agent behind Kiro Crew, running your own local installs. Every provider's models appear in the chat model picker, and picking one hot-swaps provider and model mid-conversation without a restart.",
   "author": "mmkhatib",
   "license": "MIT",
+  "iconPath": "assets/icon.png",
+  "screenshots": [
+    "assets/screenshots/chat-picker.png"
+  ],
+  "heroImage": "assets/hero-light.png",
+  "heroImageDark": "assets/hero-dark.png",
+  "heroImageDetail": "assets/hero-detail-light.png",
+  "heroImageDetailDark": "assets/hero-detail-dark.png",
   "defaultEnabled": false,
   "highlights": [
-    "One picker: every harness's models listed in the dashboard's OWN model dropdown",
-    "Picking 'Gemini CLI › gemini-2.5-pro' switches backend AND model in one click",
-    "Switch applies in-process — no Kiro Crew restart",
-    "Runs your own local install of each harness — nothing is bundled or downloaded",
-    "No file patching: patches in-process at startup, so Kiro Crew updates cannot wipe it",
-    "Restores Kiro Crew MCP tools (cron, spawn, monitor) on the Claude backend",
+    "Claude Code, Gemini CLI and Codex CLI (via adapter) as Kiro Crew's agent backend",
+    "One chat picker: 'Claude Code › opus', 'Gemini CLI › gemini-2.5-pro', 'Kiro CLI › auto'",
+    "Hot-swap provider and model mid-conversation; the open chat's session is relaunched with the conversation kept",
+    "No restart after the first one; no files in the Kiro Crew install are edited, so updates cannot undo it",
+    "Runs your own local harness installs; nothing is bundled or downloaded",
+    "Restores Kiro Crew MCP tools on Claude for builds that ship without them",
     "Refuses to register rather than half-apply if Kiro Crew's internals move"
   ],
   "backend": {
@@ -35,17 +43,27 @@
       "args": [],
       "dialect": "claude",
       "enabled": true,
-      "models": ["default", "sonnet", "opus", "haiku"],
+      "models": [
+        "default",
+        "sonnet",
+        "opus",
+        "haiku"
+      ],
       "_models_note": "Verified by direct ACP handshake against claude-agent-acp v0.70.0: session/new returns NO 'models' key, and configOptions[id=model] accepts exactly default | sonnet | claude-fable-5[1m] | opus | haiku. 'opus' is Opus 5. The CLI-style name 'claude-opus-5' is NOT accepted here and yields -32603. claude-fable-5[1m] is left out of the picker because the bracketed form risks tripping the canonical-key guard in _model_rejected_reason; set it via config.json if you want it."
     },
     {
       "id": "gemini",
       "label": "Gemini CLI",
       "command": "gemini",
-      "args": ["--experimental-acp"],
+      "args": [
+        "--experimental-acp"
+      ],
       "dialect": "standard",
       "enabled": true,
-      "models": ["gemini-2.5-pro", "gemini-2.5-flash"]
+      "models": [
+        "gemini-2.5-pro",
+        "gemini-2.5-flash"
+      ]
     },
     {
       "id": "codex",
@@ -70,10 +88,20 @@
   "inject_mcp_servers": true,
   "inject_ui": true,
   "_config_note": "harnesses, inject_mcp_servers and inject_ui are TOP-LEVEL on purpose. Kiro Crew collects every unknown top-level manifest key into AppManifest.extra and passes exactly that dict to the hook as ctx.config. Nesting them under a 'config' key would land them at ctx.config['config'] and the hook would silently fall back to its defaults with nothing logged.",
-  "tags": ["acp", "backend", "provider", "claude", "gemini", "codex"],
+  "tags": [
+    "developer-tools",
+    "dev",
+    "acp",
+    "claude-code",
+    "codex",
+    "gemini-cli",
+    "agent-backend",
+    "model-switcher",
+    "provider"
+  ],
   "useCases": [
-    "Route Kiro Crew sessions through a local Claude Code, Gemini CLI or Codex CLI install instead of kiro-cli.",
-    "Switch provider and model from the dashboard instead of hand-editing config.json."
+    "Run Kiro Crew sessions on a local Claude Code, Gemini CLI or Codex CLI install instead of kiro-cli.",
+    "Switch provider and model from the chat model picker, mid-conversation, instead of hand-editing config.json or restarting."
   ],
   "configuration": [
     "Enable and trust the app, then restart Kiro Crew ONCE so the startup hook runs. After that every harness appears in the normal chat model picker as 'Provider › model', and switching between them needs no further restart. On Windows also set agent.sandbox_allow_unsandboxed_exec=true so the harness subprocess may spawn."
